@@ -1,0 +1,12 @@
+--- /opt/xensource/sm/ISCSISR.py	Wed May 12 13:17:55 2010 +0000
++++ /opt/xensource/sm/ISCSISR.py	Sat May 22 00:50:59 2010 -0700
+@@ -452,8 +452,8 @@
+             rec = self.pathdict[val]
+             path = os.path.join(rec['path'],"LUN%s" % lunid)
+             realpath = os.path.realpath(path)
++            host = self.adapter[val]
+             if not self.devs.has_key(realpath):
+-                host = self.adapter[val]
+                 l = [realpath, host, 0, 0, lunid]
+                 scsiutil.scsi_dev_ctrl(l,"add")
+                 if not util.wait_for_path(path, MAX_LUNID_TIMEOUT):

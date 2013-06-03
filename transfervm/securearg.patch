@@ -1,0 +1,44 @@
+--- /usr/tgtd.c	2011-01-07 12:31:34.156479000 +0000
++++ /usr/tgtd.c	2011-01-07 15:17:37.117404000 +0000
+@@ -52,7 +52,7 @@
+ };
+ 
+ unsigned long pagesize, pageshift, pagemask;
+-
++int secure_flag;
+ static int ep_fd;
+ static char program_name[] = "tgtd";
+ static LIST_HEAD(tgt_events_list);
+@@ -61,12 +61,13 @@
+ static struct option const long_options[] =
+ {
+ 	{"foreground", no_argument, 0, 'f'},
++        {"secure", no_argument, 0, 's'},
+ 	{"debug", required_argument, 0, 'd'},
+ 	{"help", no_argument, 0, 'h'},
+ 	{0, 0, 0, 0},
+ };
+ 
+-static char *short_options = "fd:h";
++static char *short_options = "fd:h:s:fs";
+ 
+ static void usage(int status)
+ {
+@@ -77,6 +78,7 @@
+ 		printf("\
+ Target framework daemon.\n\
+   -f, --foreground        make the program run in the foreground\n\
++  -s, --secure            bind the daemon only to the loopback interface\n\
+   -d, --debug debuglevel  print debugging information\n\
+   -h, --help              display this help and exit\n\
+ ");
+@@ -302,6 +304,9 @@
+ 		case 'f':
+ 			is_daemon = 0;
+ 			break;
++                case 's':
++                        secure_flag = 1;
++                        break;
+ 		case 'd':
+ 			is_debug = atoi(optarg);
+ 			break;

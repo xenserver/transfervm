@@ -1,0 +1,82 @@
+#!/bin/sh
+
+set -eu
+
+usage() {
+	echo "$0 <fs-staging-dir> <xml-filename> <tmpdir> <output>" >&2
+	exit 1
+}
+
+# parse cmdline
+[ $# -ne 4 ] && usage
+FS_STAGING="$1"
+XML_FILE="$2"
+TMPDIR="$3"
+OUTPUT="$4"
+
+if [ "$UID" = "0" ]
+then
+  SUDO=
+else
+  SUDO=sudo
+fi
+
+# create temporary files and dirs
+FS_TMPFILE=$(mktemp "$TMPDIR/mkxva-fsimg-XXXXX")
+XVA_TARBALL_STAGING=$(mktemp -d "$TMPDIR/mkxva-tarball-staging-XXXXX")
+
+# turn a staging dir into an ext3 filesystem image
+mkfs () {
+    local staging="$1"
+    local output="$2"
+    local size_kb
+    local mountpoint=$(mktemp -d "$TMPDIR/mkfs-XXXXXX")
+    
+    #create an ext3 filesystem 2x larger than required
+    size_kb=$(du -sk "$staging" | { read kb dir ; echo $kb ; })
+    size_kb=$((2 * $size_kb))
+
+    # create new empty fs
+    dd if=/dev/zero of="$output" bs=1k count=0 seek=$size_kb
+    /sbin/mkfs.ext3 -F "$output"
+
+    # copy staging dir contents to fs image
+    trap "$SUDO umount $mountpoint; rmdir $mountpoint" EXIT
+    $SUDO mount -oloop "$output" "$mountpoint"
+    $SUDO tar -C "$staging" -c . | tar -C "$mountpoint" -x 
+    $SUDO umount "$mountpoint"
+    rmdir "$mountpoint"
+    trap "" EXIT
+}
+
+# split a virtual disk image into the format expected inside an xva file
+splitvdi () {
+    local diskimg="$1"
+    local outputdir="$2"
+
+    local n_bytes=$(stat --printf=%s "$diskimg")
+    local n_meg=$((($n_bytes+$((1024*1024 -1)))/$((1024*1024))))
+    local i=0
+    while [ $i -lt $n_meg ] ; do 
+	local file="$outputdir"/chunk-$(printf "%08d" $i)
+	dd if="$diskimg" of="$file" skip=$i bs=1M count=1
+	gzip "$file"
+	i=$(($i + 1))
+    done
+}
+
+mkfs "$FS_STAGING" "$FS_TMPFILE"
+VDI_SIZE=$(stat --format=%s "$FS_TMPFILE")
+cp "$XML_FILE" "$XVA_TARBALL_STAGING"/ova.xml
+sed -i -e "s/@VDI_SIZE@/$VDI_SIZE/" "$XVA_TARBALL_STAGING"/ova.xml
+mkdir "$XVA_TARBALL_STAGING"/xvda
+splitvdi "$FS_TMPFILE" "$XVA_TARBALL_STAGING"/xvda
+TARFILE_MEMBERS=$(cd "$XVA_TARBALL_STAGING" && echo ova.xml xvda/*)
+tar -C "$XVA_TARBALL_STAGING" --format=v7 -c $TARFILE_MEMBERS -f "$OUTPUT.tmp"
+mv "$OUTPUT.tmp" "$OUTPUT"
+
+# cleanup
+if [ -z "${DO_NOT_CLEANUP:-}" ] ; then 
+    rm -rf "$XVA_TARBALL_STAGING"
+    rm -f "$FS_TMPFILE"
+fi

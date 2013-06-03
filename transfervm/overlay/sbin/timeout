@@ -1,0 +1,52 @@
+#!/bin/sh
+
+device="$1"
+
+. /sbin/transfervm.functions
+
+TCP_TIMESTAMP_FILE=/var/last_tcp_connection_time
+
+tcp_connections_exist() {
+    conns="$(netstat -t | grep tcp)"
+    [ -n "$conns" ]
+}
+
+update_tcp_connections_last_seen() {
+    if tcp_connections_exist ; then
+        touch $TCP_TIMESTAMP_FILE
+    fi
+}
+
+timeout_expired() {
+   #Checking for a timeout by comparing current time in  epnoch time
+   #with the age (also in epnoch time) of the TCP_TIMESTAMP_FILE which
+   #will get routinely touched when reads of requests are made
+
+   timeout_minutes="$(get_config $device timeout)"
+   time_now=$(date +%s)
+   mod_time=$(date +%s -r $TCP_TIMESTAMP_FILE)
+   mins_passed=$(((time_now - mod_time)/60))
+   [ $mins_passed -ge $timeout_minutes ]
+}
+
+
+if ! config_exists $device timeout ; then
+    echo "Device $device has no timeout set, timeouts disabled."
+    exit 0
+fi
+
+# Init the timeout even if no connections exist at boot time
+touch $TCP_TIMESTAMP_FILE
+
+while [ true ] ; do
+    update_tcp_connections_last_seen
+
+    if timeout_expired ; then
+        echo "Timeout of exposed device $device, HALTING"
+        halt
+    fi
+
+    # Sleep must be short so that connections are not missed
+    # (for very small data transfers 1 second is to long) FIXME
+    sleep 1
+done

@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+start()
+{
+  #Uninstall any existing TVMs first on a host install
+  /opt/xensource/packages/files/transfer-vm/uninstall-transfer-vm.sh
+  /opt/xensource/packages/files/transfer-vm/install-transfer-vm.sh
+}
+
+case $1 in
+  start) start ;;
+esac

@@ -1,0 +1,11 @@
+--- /usr/spc.c	2007-12-27 03:31:37.000000000 +0000
++++ /usr/spc.c	2011-02-15 10:19:22.130943000 +0000
+@@ -134,7 +134,7 @@
+ 	uint8_t	*data = vpd_pg->data;
+ 
+ 	data[0] = (PIV_ISCSI << 4) | INQ_CODE_ASCII;
+-	data[1] = PIV_VALID | ASS_TGT_PORT | DESG_VENDOR;
++	data[1] = PIV_VALID | ASS_LU | DESG_VENDOR;
+ 	data[3] = SCSI_ID_LEN;
+ 
+ 	strncpy((char *)data + 4, id, SCSI_ID_LEN);

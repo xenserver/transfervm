@@ -1,0 +1,25 @@
+--- /usr/iscsi/iscsi_tcp.c	2007-12-27 03:31:37.000000000 +0000
++++ /usr/iscsi/iscsi_tcp.c	2011-01-07 13:44:42.760936000 +0000
+@@ -36,6 +36,8 @@
+ #include "tgtd.h"
+ #include "util.h"
+ 
++extern int secure_flag;
++
+ static void iscsi_tcp_event_handler(int fd, int events, void *data);
+ 
+ static struct iscsi_transport iscsi_tcp;
+@@ -162,7 +164,12 @@
+ 	hints.ai_socktype = SOCK_STREAM;
+ 	hints.ai_flags = AI_PASSIVE;
+ 
+-	ret = getaddrinfo(NULL, servname, &hints, &res0);
++        if (secure_flag)
++                ret = getaddrinfo("localhost", servname, &hints, &res0);
++        else
++        	ret = getaddrinfo(NULL, servname, &hints, &res0);
++
++
+ 	if (ret) {
+ 		eprintf("unable to get address info, %m\n");
+ 		return -errno;

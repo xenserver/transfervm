@@ -1,0 +1,70 @@
+--- src/mod_auth.c	2010-03-13 20:02:08.000000000 +0000
++++ src/mod_auth.c	2010-04-11 17:49:30.000000000 +0100
+@@ -106,6 +106,7 @@
+ 	PATCH(auth_htpasswd_userfile);
+ 	PATCH(auth_require);
+ 	PATCH(auth_debug);
++	PATCH(auth_allow_bits_session);
+ 	PATCH(auth_ldap_hostname);
+ 	PATCH(auth_ldap_basedn);
+ 	PATCH(auth_ldap_binddn);
+@@ -146,6 +147,8 @@
+ 				PATCH(auth_require);
+ 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.debug"))) {
+ 				PATCH(auth_debug);
++			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.allow-bits-session"))) {
++				PATCH(auth_allow_bits_session);
+ 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.hostname"))) {
+ 				PATCH(auth_ldap_hostname);
+ #ifdef USE_LDAP
+@@ -227,6 +230,10 @@
+ 
+ 	req = ((data_array *)(p->conf.auth_require->data[k]))->value;
+ 
++	if (p->conf.auth_allow_bits_session && connection_has_valid_session(srv, con)) {
++		return HANDLER_GO_ON;
++	}
++
+ 	/* try to get Authorization-header */
+ 
+ 	if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "Authorization"))) {
+@@ -326,7 +336,8 @@
+ 		{ "auth.backend.ldap.allow-empty-pw",     NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },
+ 		{ "auth.backend.htdigest.userfile", NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },
+ 		{ "auth.backend.htpasswd.userfile", NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },
+-		{ "auth.debug",                     NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },  /* 13 */
++		{ "auth.debug",                     NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
++		{ "auth.allow-bits-session",        NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },  /* 15 */
+ 		{ NULL,                             NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
+ 	};
+ 
+@@ -377,6 +388,7 @@
+ 		cv[12].destination = s->auth_htdigest_userfile;
+ 		cv[13].destination = s->auth_htpasswd_userfile;
+ 		cv[14].destination = &(s->auth_debug);
++		cv[15].destination = &(s->auth_allow_bits_session);
+ 
+ 		p->config_storage[i] = s;
+ 		ca = ((data_config *)srv->config_context->data[i])->value;
+--- src/http_auth.h	2010-03-13 20:02:08.000000000 +0000
++++ src/http_auth.h	2010-04-11 17:49:35.000000000 +0100
+@@ -40,6 +40,8 @@
+ 
+ 	unsigned short auth_debug;
+ 
++	unsigned short auth_allow_bits_session;
++	
+ 	/* generated */
+ 	auth_backend_t auth_backend;
+ 
+diff -u -r src2/connections.h src/connections.h
+--- src/connections.h	2010-04-11 17:52:22.000000000 +0100
++++ src/connections.h	2010-04-11 20:31:15.000000000 +0100
+@@ -16,4 +16,7 @@
+ const char * connection_get_short_state(connection_state_t state);
+ int connection_state_machine(server *srv, connection *con);
+ 
++int (*connection_session_validator)(server *srv, connection *con);
++int connection_has_valid_session(server *srv, connection *con);
++
+ #endif

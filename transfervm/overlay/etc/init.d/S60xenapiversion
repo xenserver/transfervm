@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# This is XenServer Transfer VM @PRODUCT_MAJOR_VERSION@.@PRODUCT_MINOR_VERSION@.@PRODUCT_MICRO_VERSION@ build @BUILD_NUMBER@.
+
+echo "Reporting version to XAPI"
+xw=/usr/bin/xenstore-write
+${xw} attr ""
+${xw} attr/PVAddons ""
+${xw} attr/PVAddons/MajorVersion "@PRODUCT_MAJOR_VERSION@"
+${xw} attr/PVAddons/MinorVersion "@PRODUCT_MINOR_VERSION@"
+${xw} attr/PVAddons/MicroVersion "@PRODUCT_MICRO_VERSION@"
+${xw} data/updated "`date`"

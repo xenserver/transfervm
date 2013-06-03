@@ -1,0 +1,28 @@
+#!/bin/sh
+
+set -e
+
+remote_host="$1"
+remote_username="$2"
+remote_password="$3"
+fn="$4"
+shift 4
+args=
+
+while [ "$1" ]
+do
+  args="${args}args:$1 "
+  shift
+done
+
+set -u
+
+this_host=$(sed -n "s/^INSTALLATION_UUID='\(.*\)'$/\1/p" \
+                   /etc/xensource-inventory)
+
+xe host-call-plugin plugin=copy "host-uuid=$this_host" \
+   "fn=$fn" \
+   "args:remote_host=$remote_host" \
+   "args:remote_username=$remote_username" \
+   "args:remote_password=$remote_password" \
+   $args

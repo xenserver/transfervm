@@ -1,0 +1,4 @@
+config BR2_PACKAGE_PULLER
+        bool "puller"
+        help
+	  HTTP(S) client that pulls a VDI and pushes it into the local HTTPD.

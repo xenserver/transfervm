@@ -1,0 +1,9 @@
+# Menu.lst for transfervm.
+
+default 0
+
+title TransferVM
+root (hd0,0)
+kernel /boot/vmlinuz xencons=hvc
+initrd /boot/initrd.img
+

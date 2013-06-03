@@ -1,0 +1,270 @@
+#!/bin/sh
+
+DOCROOT="/var/www"
+
+generate_lighttpd_config() {
+    device="$1"
+    port="$2"
+    use_ssl="$3"
+    transfer_mode="$4"
+    authfile="$5"
+    pemfile="$6"
+
+    cat <<EOF
+server.document-root = "$DOCROOT"
+server.port = $port
+server.max-request-size = 16384  # In KB
+server.max-connections = 3
+server.errorlog = "/var/log/lighttpd.$device.log"
+server.modules = (
+EOF
+    if [ "$transfer_mode" != "http_pull" ]
+    then
+        cat <<EOF
+   "mod_auth", 
+EOF
+    fi
+   cat <<EOF
+   "mod_put", "mod_bits", "mod_bitsvhd", "mod_getvhd", "mod_putvhd")
+debug.log-request-header = "enable"
+debug.log-response-header = "enable"
+#debug.log-file-not-found = "enable"
+#debug.log-blockio = "enable"
+#debug.log-request-handling = "enable"
+#debug.log-condition-handling = "enable"
+#debug.log-state-handling = "enable"
+EOF
+
+    if [ "$transfer_mode" = "http_pull" ]
+    then
+        cat <<EOF
+server.bind = "localhost"
+EOF
+    else
+        cat <<EOF
+auth.debug = 2
+auth.backend = "plain"
+auth.backend.plain.userfile = "$authfile"
+auth.require = ("" => ("method" => "basic", "realm" => "Transfer VM", "require" => "valid-user"))
+EOF
+    fi
+
+    if [ "$transfer_mode" = "bits" ] ; then
+        cat <<EOF
+auth.allow-bits-session = "enable"
+EOF
+    fi
+
+    if [ "$use_ssl" = "true" ] ; then
+        cat <<EOF
+ssl.engine = "enable"
+ssl.pemfile = "$pemfile"
+EOF
+    else
+        cat <<EOF
+ssl.engine = "disable"
+EOF
+    fi
+}
+
+generate_lighttpd_per_device_config() {
+    url_path="$1"
+    transfer_mode="$2"
+    backend_sparse="$3"
+    vdi_size="$4"
+    vhd_blocks="$5"
+    vhd_uuid="$6"
+    vhd_puuid="$7"
+    vhd_ppath="$8"
+
+    # Matching on $PHYSICAL["path"] is not supported in lighttpd 1.4.x
+    echo "\$HTTP[\"url\"] == \"$url_path\" {"
+    if [ "$transfer_mode" = "http" ]
+    then
+        cat <<EOF
+  put.activate = "enable"
+EOF
+    else
+        cat <<EOF
+  server.default-errorpages = "disable"
+  bits.activate = "enable"
+EOF
+    fi
+    echo '}'
+
+    echo "\$HTTP[\"url\"] == \"$url_path.vhd\" {"
+    cat <<EOF
+  getvhd.activate = "enable"
+  getvhd.vdi_size = "$vdi_size"
+  getvhd.blocks = "$vhd_blocks"
+  getvhd.uuid = "$vhd_uuid"
+  getvhd.puuid = "$vhd_puuid"
+  getvhd.ppath = "$vhd_ppath"
+EOF
+    if [ "$transfer_mode" = "http" ]
+    then
+        cat <<EOF
+  putvhd.activate = "enable"
+EOF
+        if [ "$backend_sparse" = "true" ]; then
+        cat <<EOF
+  putvhd.sparse = "enable"
+EOF
+        fi
+    else
+        cat <<EOF
+  server.default-errorpages = "disable"
+  bitsvhd.activate = "enable"
+EOF
+        if [ "$backend_sparse" = "true" ]; then
+        cat <<EOF
+  bitsvhd.sparse = "enable"
+EOF
+        fi
+    fi
+    echo '}'
+}
+
+generate_lighttpd_non_leaf_config() {
+    url_path="$1"
+    vdi_size="$2"
+    vhd_blocks="$3"
+    vhd_block_map="$4"
+    vhd_uuid="$5"
+    vhd_puuid="$6"
+    vhd_ppath="$7"
+
+    cat <<EOF
+\$HTTP["url"] == "$url_path.vhd" {
+  getvhd.activate = "enable"
+  getvhd.non_leaf = "enable"
+  getvhd.vdi_size = "$vdi_size"
+  getvhd.blocks = "$vhd_blocks"
+  getvhd.block_map = "$vhd_block_map"
+  getvhd.uuid = "$vhd_uuid"
+  getvhd.puuid = "$vhd_puuid"
+  getvhd.ppath = "$vhd_ppath"
+}
+EOF
+}
+
+generate_ssl_keys() {
+    device="$1"
+    pemfile="$2"
+
+    keyfile="$pemfile.key"
+    certfile="$pemfile.cert"
+    reqfile="reqfile.key"
+
+    openssl genrsa -out "$keyfile" 2048
+    openssl req -new -outform PEM -out "$reqfile" -keyform PEM -key "$keyfile" -days 365 <<EOF
+UK
+Cambridgeshire
+Cambridge
+Citrix
+.
+$(get_ip_addr)
+.
+.
+.
+EOF
+
+    openssl x509 -req -days 365 -in "$reqfile" -signkey "$keyfile" -out "$certfile"
+    cat "$keyfile" "$certfile" >"$pemfile"
+
+    xenstore_write_ssl_cert "$device" "$certfile"
+
+    rm "$keyfile" "$certfile"
+}
+
+add_http_server() {
+    last_device=$(xenstore-read "vm-data/transfer/last_device")
+
+    device="$1"
+
+    if [ "$device" != "$last_device" ]
+    then
+        # We configure all devices in one go, so we only want to run this
+        # code for the last device.
+        return
+    fi
+
+    transfer_mode="$2"
+
+    port="$(get_config $device port)"
+    use_ssl="$(get_config $device use_ssl)"
+    IFS=, all_devices=$(xenstore-read "vm-data/transfer/all_devices")
+
+    username="$(get_config $device username)"
+    password="$(get_config $device password)"
+
+    configfile="/etc/lighttpd.$device.conf"
+    authfile="/etc/lighttpd.$device.plainpasswd"
+    pemfile="/etc/lighttpd.$device.sslpem"
+    echo "$username:$password" >"$authfile"
+
+    if [ "$use_ssl" = "true" ] ; then
+        # Sleep here till we have an IP address (required for the certificate)
+        while ! xenstore-exists "attr/eth0" ; do
+            sleep 1
+        done
+
+        generate_ssl_keys "$device" "$pemfile"
+    fi
+
+    generate_lighttpd_config "$device" "$port" "$use_ssl" "$transfer_mode" \
+        "$authfile" "$pemfile" \
+        >"$configfile"
+
+    for dev in $all_devices
+    do
+        url_path="$(get_config $dev url_path)"
+        backend_sparse="$(get_config $dev backend_sparse)"
+        vdi_size="$(get_config $dev vdi_size)"
+        vhd_blocks="$(get_config $dev vhd_blocks 2>/dev/null)"
+        vhd_uuid="$(get_config $dev vhd_uuid 2>/dev/null)"
+        vhd_puuid="$(get_config $dev vhd_puuid 2>/dev/null)"
+        vhd_ppath="$(get_config $dev vhd_ppath 2>/dev/null)"
+
+        generate_lighttpd_per_device_config \
+            "$url_path" "$transfer_mode" "$backend_sparse" "$vdi_size" \
+            "$vhd_blocks" "$vhd_uuid" "$vhd_puuid" "$vhd_ppath" \
+            >>"$configfile"
+
+        # Assumes that url_path does not contain any slashes or shell
+        # metacharacters!
+        ln -s "/dev/$dev" "$DOCROOT/$url_path"
+        ln -s "/dev/$dev" "$DOCROOT/$url_path.vhd"
+    done
+
+    IFS=, non_leaf_vdi_uuids=$(xenstore-read \
+                                   "vm-data/transfer/non_leaf_vdi_uuids" 2>/dev/null)
+    for vdi_uuid in $non_leaf_vdi_uuids
+    do
+        url_path="$(get_config $vdi_uuid url_path)"
+        vdi_size="$(get_config $vdi_uuid vdi_size)"
+        vhd_blocks="$(get_config $vdi_uuid vhd_blocks 2>/dev/null)"
+        vhd_block_map="$(get_config $vdi_uuid vhd_block_map 2>/dev/null)"
+        vhd_uuid="$(get_config $vdi_uuid vhd_uuid 2>/dev/null)"
+        vhd_puuid="$(get_config $vdi_uuid vhd_puuid 2>/dev/null)"
+        vhd_ppath="$(get_config $vdi_uuid vhd_ppath 2>/dev/null)"
+
+        generate_lighttpd_non_leaf_config \
+            "$url_path" "$vdi_size" "$vhd_blocks" "$vhd_block_map" \
+            "$vhd_uuid" "$vhd_puuid" "$vhd_ppath" \
+            >>"$configfile"
+
+        ln -s "/dev/null" "$DOCROOT/$url_path.vhd"
+    done
+
+    ulimit -H -c unlimited
+    ulimit -c unlimited
+    cd /
+    /usr/sbin/lighttpd -f "$configfile"
+}
+
+remove_http_server() {
+    device="$1"
+
+    echo "TODO: remove http server for $device"
+}

@@ -1,0 +1,146 @@
+#
+# This is used when building outside of build.hg.
+#
+
+--- buildroot.config	2009-10-19 15:05:08.000000000 +0100
++++ buildroot.config.dist	2009-10-18 20:40:53.000000000 +0100
+@@ -83,7 +83,7 @@
+ BR2_ZCAT="gzip -d -c"
+ BR2_BZCAT="bzcat"
+ BR2_TAR_OPTIONS=""
+-BR2_DL_DIR="/usr/groups/linux/distfiles/buildroot"
++BR2_DL_DIR="/tmp/transfervm-downloads"
+ BR2_COPYTO=""
+ 
+ #
+@@ -131,10 +131,10 @@
+ #
+ # Toolchain
+ #
+-# BR2_TOOLCHAIN_BUILDROOT is not set
+-BR2_TOOLCHAIN_EXTERNAL=y
++BR2_TOOLCHAIN_BUILDROOT=y
++# BR2_TOOLCHAIN_EXTERNAL is not set
+ # BR2_TOOLCHAIN_EXTERNAL_SOURCE is not set
+-# BR2_TOOLCHAIN_SOURCE is not set
++BR2_TOOLCHAIN_SOURCE=y
+ BR2_EXT_GCC_VERSION_4_1_2=y
+ BR2_EXT_GCC_VERSION_4_2_1=y
+ BR2_EXT_GCC_VERSION_4_2_2=y
+@@ -144,9 +144,82 @@
+ BR2_EXT_UCLIBC_VERSION_0_9_28_3=y
+ BR2_EXT_UCLIBC_VERSION_0_9_29=y
+ BR2_EXT_UCLIBC_VERSION_0_9_30=y
+-BR2_TOOLCHAIN_EXTERNAL_LIB_C="libc.so.0"
+-BR2_TOOLCHAIN_EXTERNAL_LIBS="ld-uClibc.so.0 libcrypt.so.0 libdl.so.0 libgcc_s.so libm.so.0 libnsl.so.0 libpthread.so.0 libresolv.so.0 librt.so.0 libutil.so.0"
+-BR2_TOOLCHAIN_EXTERNAL_STRIP=y
++
++#
++# Kernel Header Options
++#
++# BR2_KERNEL_HEADERS_2_4_31 is not set
++# BR2_KERNEL_HEADERS_2_6_20_4 is not set
++# BR2_KERNEL_HEADERS_2_6_20 is not set
++# BR2_KERNEL_HEADERS_2_6_21_5 is not set
++# BR2_KERNEL_HEADERS_2_6_21 is not set
++# BR2_KERNEL_HEADERS_2_6_22_1 is not set
++# BR2_KERNEL_HEADERS_2_6_22_10 is not set
++# BR2_KERNEL_HEADERS_2_6_22 is not set
++# BR2_KERNEL_HEADERS_2_6_23 is not set
++# BR2_KERNEL_HEADERS_2_6_24 is not set
++# BR2_KERNEL_HEADERS_2_6_25 is not set
++# BR2_KERNEL_HEADERS_2_6_26 is not set
++# BR2_KERNEL_HEADERS_2_6_27 is not set
++BR2_KERNEL_HEADERS_2_6_28=y
++# BR2_KERNEL_HEADERS_SNAP is not set
++# BR2_KERNEL_HEADERS_PATCH_DIR is not set
++BR2_DEFAULT_KERNEL_HEADERS="2.6.28.4"
++
++#
++# uClibc Options
++#
++# BR2_UCLIBC_VERSION_0_9_28_3 is not set
++# BR2_UCLIBC_VERSION_0_9_29 is not set
++BR2_UCLIBC_VERSION_0_9_30=y
++# BR2_UCLIBC_VERSION_SNAPSHOT is not set
++BR2_UCLIBC_CONFIG="toolchain/uClibc/uClibc-0.9.30.config"
++# BR2_PTHREAD_DEBUG is not set
++# BR2_UCLIBC_PROGRAM_INVOCATION is not set
++# BR2_UCLIBC_INSTALL_TEST_SUITE is not set
++
++#
++# Binutils Options
++#
++# BR2_BINUTILS_VERSION_2_17 is not set
++# BR2_BINUTILS_VERSION_2_17_50_0_17 is not set
++# BR2_BINUTILS_VERSION_2_18 is not set
++# BR2_BINUTILS_VERSION_2_18_50_0_1 is not set
++# BR2_BINUTILS_VERSION_2_18_50_0_3 is not set
++# BR2_BINUTILS_VERSION_2_18_50_0_6 is not set
++# BR2_BINUTILS_VERSION_2_18_50_0_8 is not set
++# BR2_BINUTILS_VERSION_2_18_50_0_9 is not set
++BR2_BINUTILS_VERSION_2_19=y
++BR2_BINUTILS_VERSION="2.19"
++BR2_EXTRA_BINUTILS_CONFIG_OPTIONS=""
++
++#
++# GCC Options
++#
++# BR2_GCC_VERSION_3_4_6 is not set
++# BR2_GCC_VERSION_4_0_4 is not set
++# BR2_GCC_VERSION_4_1_2 is not set
++# BR2_GCC_VERSION_4_2_1 is not set
++# BR2_GCC_VERSION_4_2_2 is not set
++# BR2_GCC_VERSION_4_2_3 is not set
++# BR2_GCC_VERSION_4_2_4 is not set
++# BR2_GCC_VERSION_4_3_1 is not set
++BR2_GCC_VERSION_4_3_2=y
++BR2_GCC_SUPPORTS_SYSROOT=y
++BR2_GCC_SUPPORTS_FINEGRAINEDMTUNE=y
++BR2_GCC_VERSION="4.3.2"
++BR2_TOOLCHAIN_SYSROOT=y
++# BR2_GCC_USE_SJLJ_EXCEPTIONS is not set
++BR2_EXTRA_GCC_CONFIG_OPTIONS=""
++# BR2_GCC_CROSS_FORTRAN is not set
++# BR2_INSTALL_OBJC is not set
++# BR2_INSTALL_FORTRAN is not set
++BR2_GCC_SHARED_LIBGCC=y
++
++#
++# Ccache Options
++#
++# BR2_CCACHE is not set
+ 
+ #
+ # Gdb Options
+@@ -169,8 +242,11 @@
+ # BR2_PTHREADS_NATIVE is not set
+ # BR2_INSTALL_LIBSTDCPP is not set
+ BR2_TARGET_OPTIMIZATION="-Os -pipe"
+-BR2_TOOLCHAIN_EXTERNAL_PATH="/usr/local/i686-linux-uclibc"
+-BR2_TOOLCHAIN_EXTERNAL_PREFIX="$(ARCH)-linux-uclibc"
++# BR2_MKLIBS is not set
++# BR2_PACKAGE_SSTRIP_TARGET is not set
++# BR2_PACKAGE_SSTRIP_HOST is not set
++# BR2_ENABLE_MULTILIB is not set
++BR2_CROSS_TOOLCHAIN_TARGET_UTILS=y
+ 
+ #
+ # Package Selection for the target
+@@ -183,12 +259,12 @@
+ # BR2_BUSYBOX_VERSION_1_9_X is not set
+ # BR2_BUSYBOX_VERSION_1_10_X is not set
+ # BR2_BUSYBOX_VERSION_1_11_X is not set
+-BR2_BUSYBOX_VERSION_1_12_X=y
+-# BR2_BUSYBOX_VERSION_1_13_X is not set
++# BR2_BUSYBOX_VERSION_1_12_X is not set
++BR2_BUSYBOX_VERSION_1_13_X=y
+ # BR2_PACKAGE_BUSYBOX_SNAPSHOT is not set
+-BR2_BUSYBOX_VERSION="1.12.4"
++BR2_BUSYBOX_VERSION="1.13.2"
+ BR2_PACKAGE_BUSYBOX_FULLINSTALL=y
+-BR2_PACKAGE_BUSYBOX_CONFIG="package/busybox/busybox-1.11.x.config"
++BR2_PACKAGE_BUSYBOX_CONFIG="package/busybox/busybox-1.13.x.config"
+ # BR2_PACKAGE_BUSYBOX_HIDE_OTHERS is not set
+ # BR2_PACKAGE_BUSYBOX_SKELETON is not set
+ 

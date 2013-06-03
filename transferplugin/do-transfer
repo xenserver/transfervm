@@ -1,0 +1,35 @@
+#!/bin/sh
+
+set -e
+
+fn=$1
+shift
+args=
+
+while [ "$1" ]
+do
+  args="${args}args:$1 "
+  shift
+done
+
+set -u
+
+this_host=$(sed -n "s/^INSTALLATION_UUID='\(.*\)'$/\1/p" \
+                   /etc/xensource-inventory)
+
+result=$(xe host-call-plugin plugin=transfer "host-uuid=$this_host" \
+         "fn=$fn" \
+         $args)
+
+if [ "$fn" = "expose" ] || [ "$fn" = "expose_forest" ]
+then
+  IFS=, record_handles=$result
+  for record_handle in $record_handles
+  do
+    xe host-call-plugin plugin=transfer "host-uuid=$this_host" \
+       fn=get_record "args:record_handle=$record_handle"
+    echo
+  done
+else
+  echo "$result"
+fi

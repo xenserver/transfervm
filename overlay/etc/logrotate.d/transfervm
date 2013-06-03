@@ -1,0 +1,5 @@
+/var/log/transfervm/*.log {
+	rotate 5
+	size 2M
+	missingok
+}

@@ -1,0 +1,50 @@
+#!/bin/sh
+
+split_url()
+{
+    echo "$1" | sed "s,^\([^:]*\)://\([^:]*\):\([^@]*\)@\([^:]*\):\([^/]*\)\(/.*\)$,'\1' '\2' '\3' '\4' '\5' '\6',g"
+}
+
+add_puller()
+{
+    device="$1"
+
+    src_url="$(get_config $device src_url)"
+    src_cert="$(get_config $device src_cert 2>/dev/null || true)"
+    dest_path="$(get_config $device url_path)"
+
+    src_bits=$(split_url "$src_url")
+
+    case "$src_url" in
+        *.vhd)
+            dest_path="$dest_path.vhd"
+            ;;
+        *)
+            ;;
+    esac
+
+    if [ "$src_cert" ]
+    then
+        src_cert_file=$(mktemp -t)
+        # Need to use printf, because xenstore-read escapes the newlines
+        # in the cert.
+        printf "$src_cert" >"$src_cert_file"
+    else
+        src_cert_file="/dev/null"
+    fi
+
+    # Sleep until we have an IP address -- we need this before we can start
+    # the pull.
+    while ! xenstore-exists "attr/eth0" ; do
+        sleep 1
+    done
+
+    sh -c ". /sbin/transfervm.functions; result=\$(/usr/bin/puller $src_bits '$src_cert_file' '$dest_path'); xenstore_write_status \"$device\" \"\$result\"" &
+}
+
+remove_puller()
+{
+    device="$1"
+
+    echo "TODO: remove puller for $device"
+}

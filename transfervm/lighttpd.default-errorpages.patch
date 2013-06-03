@@ -1,0 +1,57 @@
+--- src/base.h	2010-03-13 20:02:08.000000000 +0000
++++ src/base.h	2010-03-16 10:23:29.000000000 +0000
+@@ -252,6 +252,8 @@
+ 	unsigned short follow_symlink;
+ 	unsigned short range_requests;
+ 
++	unsigned short default_errorpages;
++
+ 	/* debug */
+ 
+ 	unsigned short log_file_not_found;
+--- src/configfile.c	2010-03-13 20:02:08.000000000 +0000
++++ src/configfile.c	2009-10-13 17:50:27.000000000 +0100
+@@ -94,6 +94,7 @@
+ 		{ "etag.use-inode",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 49 */
+ 		{ "etag.use-mtime",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 50 */
+ 		{ "etag.use-size",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 51 */
++		{ "server.default-errorpages",   NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 52 */
+ 		{ "server.host",                 "use server.bind instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+ 		{ "server.docroot",              "use server.document-root instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+ 		{ "server.virtual-root",         "load mod_simple_vhost and use simple-vhost.server-root instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+@@ -175,6 +178,8 @@
+ 		s->global_bytes_per_second_cnt = 0;
+ 		s->global_bytes_per_second_cnt_ptr = &s->global_bytes_per_second_cnt;
+ 
++                s->default_errorpages = 1;
++
+ 		cv[2].destination = s->errorfile_prefix;
+ 
+ 		cv[7].destination = s->server_tag;
+@@ -218,6 +223,8 @@
+ 		cv[50].destination = &(s->etag_use_mtime);
+ 		cv[51].destination = &(s->etag_use_size);
+ 
++		cv[52].destination = &(s->default_errorpages);
++
+ 		srv->config_storage[i] = s;
+ 
+ 		if (0 != (ret = config_insert_values_global(srv, ((data_config *)srv->config_context->data[i])->value, cv))) {
+@@ -288,6 +295,8 @@
+ 	PATCH(force_lowercase_filenames);
+ 	PATCH(is_ssl);
+ 
++	PATCH(default_errorpages);
++
+ 	PATCH(ssl_pemfile);
+ 	PATCH(ssl_ca_file);
+ 	PATCH(ssl_cipher_list);
+@@ -320,6 +329,8 @@
+ 				PATCH(document_root);
+ 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.range-requests"))) {
+ 				PATCH(range_requests);
++			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.default-errorpages"))) {
++				PATCH(default_errorpages);
+ 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.error-handler-404"))) {
+ 				PATCH(error_handler);
+ 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.errorfile-prefix"))) {

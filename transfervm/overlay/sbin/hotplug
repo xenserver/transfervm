@@ -1,0 +1,160 @@
+#!/bin/sh
+
+# log to console
+exec >/dev/console 2>&1
+
+# sleep here till boot scripts are done
+while [ ! -e /var/rciscsitarget.done ] ; do
+    sleep 1
+done
+
+echo "hotplug: $ACTION $1 /sys$DEVPATH"
+
+. /sbin/transfervm.functions
+. /sbin/hotplug.iscsi
+. /sbin/hotplug.lighttpd
+. /sbin/hotplug.puller
+
+xenstore=/usr/bin/xenstore
+
+case $1 in
+    "block")
+	case $ACTION in
+	    add)
+		blk_name=${DEVPATH#/block/}
+
+		# ignore everything except xvd* blockdevs
+		case $blk_name in
+		    xvd[a-z]) ;;
+		    *) exit 0 ;;
+		esac
+
+                # ignore devices with no xenstore config: these are not exposed VDIs
+                device_config_exists $blk_name || exit 0
+
+		# create /dev node
+		devno=$(cat /sys$DEVPATH/dev)
+		major=${devno%:*}
+		minor=${devno#*:}
+		mknod /dev/$blk_name b $major $minor
+
+                transfer_mode="$(get_config $blk_name transfer_mode)"
+
+                mutex_down "hotplug-block"
+                case $transfer_mode in
+                    http|bits)
+                        add_http_server $blk_name $transfer_mode
+                        ;;
+                    http_pull)
+                        add_http_server $blk_name $transfer_mode
+                        add_puller $blk_name
+                        ;;
+                    iscsi)
+                        add_iscsi_target $blk_name
+                        initiate_stunnel
+                        ;;
+                    *) echo "Unknown transfer mode $transfer_mode." ;;
+                esac
+                /sbin/timeout $blk_name &
+		/sbin/exposelogs $blk_name &
+		xenstore_write_ready $blk_name
+                mutex_up "hotplug-block"
+		;;
+
+	    remove)
+		blk_name=${DEVPATH#/block/}
+
+		# ignore everything except xvd* blockdevs
+		case $blk_name in
+		    xvd[a-z]) ;;
+		    *) exit 0 ;;
+		esac
+
+                # ignore devices with no xenstore config: these are not exposed VDIs
+                device_config_exists $blk_name || exit 0
+
+                transfer_mode="$(get_config $blk_name transfer_mode)"
+
+                mutex_down "hotplug-block"
+                case $transfer_mode in
+                    http|bits)
+                        remove_http_server $blk_name
+                        ;;
+                    http_pull)
+                        remove_http_server $blk_name
+                        remove_puller $blk_name
+                        ;;
+                    iscsi)
+                        remove_iscsi_target $blk_name
+                        ;;
+                    *) echo "Unknown transfer mode $transfer_mode." ;;
+                esac
+                mutex_up "hotplug-block"
+
+		# remove /dev node
+		rm /dev/$blk_name
+		;;
+	    *)
+		;;
+	esac
+	;;
+    "net")
+	case $ACTION in
+	    add)
+		net_name=${DEVPATH#/class/net/}
+		while ! ifconfig $net_name >/dev/null 2>&1 ; do
+		    echo "hotplug: waiting for $net_name to come up..."
+		    sleep 1
+		done
+
+		# do nothing for loopback interface
+		if [ "$net_name" = "lo" ]; then
+		    exit 0
+		fi
+
+                device_config_exists "$net_name" && config_mode="$(get_config $net_name config_mode)" || config_mode="dhcp"
+
+                mutex_down "hotplug-net"
+                if [ "$config_mode" = dhcp ] ; then
+                    /sbin/udhcpc -i "$net_name"
+                else
+                    ifconfig eth0 "$(get_config $net_name ip)" netmask "$(get_config $net_name mask)" up
+                    route add default gw "$(get_config $net_name gateway)"
+                fi
+
+                xenstore_write_ip "$net_name"
+
+                mutex_up "hotplug-net"
+		;;
+	    remove)
+		net_name=${DEVPATH#/class/net/}
+
+		# do nothing for loopback interface
+		if [ "${net_name}" = "lo" ]; then
+		    exit 0
+		fi
+
+                device_config_exists "$net_name" && config_mode="$(get_config $net_name config_mode)" || config_mode="dhcp"
+
+                mutex_down "hotplug-net"
+                if [ "$config_mode" = dhcp ] ; then
+                    pids=$(ps aux |
+			grep "/sbin/udhcpc -i ${net_name}" |
+			while read pid rest ; do echo $pid ; done)
+		    kill $pids
+                fi
+
+                xenstore_remove_ip "$net_name"
+
+                mutex_up "hotplug-net"
+		;;
+	    *)
+		;;
+	esac
+	;;
+    *)
+	#ignore
+	;;
+esac
+
+exit 0

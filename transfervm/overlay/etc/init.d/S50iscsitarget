@@ -1,0 +1,36 @@
+#!/bin/sh
+
+echo "Starting iSCSI target daemon..."
+
+usessl=$(/usr/bin/xenstore-read "vm-data/transfer/use_ssl")
+
+if [ "$usessl" == "True" ]; then
+   /usr/sbin/tgtd -f --secure &
+else
+   /usr/sbin/tgtd -f &
+fi
+
+# tgtd daemonises itself before it is ready to handle
+# commands so we need to wait for it
+while true; do
+    /usr/sbin/tgtadm --lld iscsi --op show --mode target
+    if [ $? -eq 0 ]; then
+	echo "... TGT daemon initialised"
+	break 1
+    fi
+    echo "... failed to communicate with TGT daemon; retrying in 1s"
+    sleep 1
+done
+
+echo "... done."
+
+touch /var/rciscsitarget.done
+
+#Create a 2meg file on disk that can be read by lighttpd
+#when appending 'Shadowed' VHD blocks. This saves us having
+#to allocated 2meg of memory.
+
+dd if=/dev/zero of=/tmp/shadow bs=2M count=1
+ln -s /tmp/shadow /dev/shadow
+
+exit 0

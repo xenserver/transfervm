@@ -1,0 +1,32 @@
+#!/bin/sh
+device="$1"
+
+. /sbin/transfervm.functions
+
+loop="true"
+
+
+check_log_flag(){
+ 
+ status=$(xenstore_read_log_flag)
+  if [ "$status" == "yes" ]; then
+     #Execute code that copies the log files, restarts lighttpd, and places the logs at an aggreed upon location.
+     log_name="lighttpd.*.log" #wildcard in the case we have multiple disks.
+     mv "/var/log/"$log_name /home/$log_name
+     #Restart Lighttpd
+     pid=$(pidof "lighttpd")
+     kill -9 $pid
+     /usr/sbin/lighttpd -f /etc/lighttpd.$device.conf
+     rm -f /var/www/log #remove the sym link - if previously present
+     ln -s /home/$log_name /var/www/log
+     xenstore_write_log_flag
+     loop="false"
+  fi
+ 
+}
+
+
+while [ "$loop" == "true" ]; do
+   check_log_flag
+   sleep 1
+done

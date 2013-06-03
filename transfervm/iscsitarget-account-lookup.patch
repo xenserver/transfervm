@@ -1,0 +1,17 @@
+Fix bug in account_lookup() that causes tgtd to crash when authenticating an
+incoming username that doesn't match any existing account. 
+
+Signed-off-by: <alex.zeffertt@eu.citrix.com>
+
+
+--- tgt-20071227/usr/target.c.orig	2009-05-20 10:35:50.000000000 -0400
++++ tgt-20071227/usr/target.c	2009-05-20 10:35:56.000000000 -0400
+@@ -797,7 +797,7 @@
+ 		return -ENOENT;
+ 
+ 	if (type == ACCOUNT_TYPE_INCOMING) {
+-		for (i = 0; target->account.nr_inaccount; i++) {
++		for (i = 0; i < target->account.nr_inaccount; i++) {
+ 			ac = __account_lookup_id(target->account.in_aids[i]);
+ 			if (ac) {
+ 				if (!strcmp(ac->user, user))

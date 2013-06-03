@@ -1,0 +1,95 @@
+--- /usr/iscsi/iscsid.c	2011-01-11 17:46:04.044966000 +0000
++++ /usr/iscsi/iscsid.c	2011-01-12 14:40:38.899638000 +0000
+@@ -27,6 +27,11 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <netdb.h>
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
++#include <sys/ioctl.h>
++#include <net/if.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -42,6 +47,8 @@
+ 
+ #define MAX_QUEUE_CMD	128
+ 
++extern int secure_flag;
++
+ enum {
+ 	IOSTATE_FREE,
+ 
+@@ -732,36 +739,41 @@
+ 
+ 	while ((key = next_key(&data, &datasize, &value))) {
+ 		if (!strcmp(key, "SendTargets")) {
+-			struct sockaddr_storage ss;
+-			socklen_t slen, blen;
+-			char *p, buf[NI_MAXHOST + 128];
+-
+-			if (value[0] == 0)
+-				continue;
+-
+-			p = buf;
+-			blen = sizeof(buf);
+-
+-			slen = sizeof(ss);
+-			conn->tp->ep_getsockname(conn, (struct sockaddr *) &ss,
+-						 &slen);
+-			if (ss.ss_family == AF_INET6) {
+-				*p++ = '[';
+-				blen--;
+-			}
+-
+-			slen = sizeof(ss);
+-			getnameinfo((struct sockaddr *) &ss, slen, p, blen,
+-				    NULL, 0, NI_NUMERICHOST);
+-
+-			p = buf + strlen(buf);
+-
+-			if (ss.ss_family == AF_INET6)
+-				 *p++ = ']';
+-
+-			sprintf(p, ":%d,1", ISCSI_LISTEN_PORT);
+-			target_list_build(conn, buf,
+-					  strcmp(value, "All") ? value : NULL);
++			/* Find all local addresses */
++			int s, n, i;
++                	struct ifconf ifc;
++                	struct ifreq ifq[16];
++                	ifc.ifc_len = sizeof(struct ifreq) * 16;
++                	ifc.ifc_req = ifq;
++                	s = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
++                	n = ioctl(s, SIOCGIFCONF, &ifc);
++                	if (n != 0) {
++                 		log_debug(1, "Multihome hack error");
++                 		text_key_add(conn, key, "Broken");
++                 		return;
++                 	}
++                 	close(s);
++                 
++                 	/* Iterate over addresses for SendTargets reply */
++                 	for(i = 0; i<ifc.ifc_len; i+=sizeof(struct ifreq)) {
++                   		char buf[NI_MAXHOST + 128];
++                   		char *addr = inet_ntoa(((struct sockaddr_in *)(&ifq[i/sizeof(struct ifreq)].ifr_addr))->sin_addr);
++                   		/* Skip loopback */
++                   		if (strcmp("127.0.0.1", addr) == 0) {
++                   			continue;
++                   		}
++                   
++                                int port = 3260;
++
++                                /* If in secure mode, return the appropraite port on the TVM */ 
++                                /* This must be the port that stunnel listens on. */
++				if (secure_flag)
++					port = 3261;
++
++                 		sprintf(buf, "%s:%d,1", addr, port);
++                 		target_list_build(conn, buf,
++						  strcmp(value, "All") ? value : NULL);
++                 	}
+ 		} else
+ 			text_key_add(conn, key, "NotUnderstood");
+ 	}

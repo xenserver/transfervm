@@ -1,0 +1,48 @@
+#!/bin/sh
+
+add_iscsi_target() {
+    device="$1"
+    username="$(get_config $device username)"
+    password="$(get_config $device password)"
+    iqn="$(get_config $device iscsi_iqn)"
+    lun="$(get_config $device iscsi_lun)"
+    sn="$(get_config $device iscsi_sn)"
+    id="$(get_config $device iscsi_id)"
+    # using userdevice number as the target id, these are unique for currently mounted block devices
+    tid="$(get_config $device userdevice)"
+
+    echo "Adding iscsi target for device $device"
+
+    /usr/sbin/tgtadm --lld iscsi --mode target --op new --tid="$tid" --targetname "$iqn"
+    /usr/sbin/tgtadm --lld iscsi --mode account --op new --user="$username" --password="$password"
+    /usr/sbin/tgtadm --lld iscsi --mode account --op bind --tid="$tid" --user="$username"
+    /usr/sbin/tgtadm --lld iscsi --mode logicalunit --op new --tid="$tid" --lun="$lun" --backing-store="/dev/$device"
+    /usr/sbin/tgtadm --lld iscsi --mode logicalunit --op update --tid="$tid" --lun="$lun" --params scsi_sn="$sn"
+    /usr/sbin/tgtadm --lld iscsi --mode logicalunit --op update --tid="$tid" --lun="$lun" --params scsi_id="$id"
+    # allow access from all IP addresses
+    /usr/sbin/tgtadm --lld iscsi --mode target --op bind --tid="$tid" --initiator-address ALL
+
+    pemfile="/etc/iscsi.sslpem"
+    generate_ssl_keys $device $pemfile
+    chmod 600 $pemfile
+}
+
+
+remove_iscsi_target() {
+    device=$1
+
+    echo "TODO: remove iscsi target for $device"
+}
+
+initiate_stunnel() {
+    #Check that the SSL mode has been set - otherwise do nothing
+    usessl=$(/usr/bin/xenstore-read "vm-data/transfer/use_ssl")
+    if [ "$usessl" == "True" ]; then
+        spid=$(pidof stunnel)
+        if [ "$spid" == "" ]; then
+            #No other instance of stunnel started
+            #Start Stunnel up with config file
+            /usr/bin/stunnel /usr/iscsi.config &
+        fi
+    fi
+}

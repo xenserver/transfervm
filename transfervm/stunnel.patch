@@ -1,0 +1,12 @@
+--- package/stunnel/stunnel.mk	2012-07-12 06:24:25.691785190 -0400
++++ package/stunnel/stunnel.mk	2012-07-12 06:25:08.275784822 -0400
+@@ -22,7 +22,8 @@
+ 	touch $(STUNNEL_DIR)/.unpacked
+ 
+ $(STUNNEL_DIR)/.configured: $(STUNNEL_DIR)/.unpacked
+-	(cd $(STUNNEL_DIR); rm -rf config.cache; \
++	(cd $(STUNNEL_DIR) && rm -rf config.cache && autoreconf -i)
++	(cd $(STUNNEL_DIR) && \
+ 		$(TARGET_CONFIGURE_OPTS) \
+ 		$(TARGET_CONFIGURE_ARGS) \
+ 		ac_cv_file___dev_ptmx_=yes \

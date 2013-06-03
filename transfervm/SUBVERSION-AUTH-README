@@ -1,0 +1,3 @@
+For some reason, the buildroot build process creates a .subversion subdirectory here as the root user.
+If the normal XenSource build fails because of this, you can safely delete it.
+I suspect that it happens when buildroot checks out package sources over svn.

@@ -1,0 +1,30 @@
+diff -ur tgt-20071227/usr/Makefile tgt-20071227.mod/usr/Makefile
+--- tgt-20071227/usr/Makefile	2007-12-26 22:31:37.000000000 -0500
++++ tgt-20071227.mod/usr/Makefile	2008-04-24 09:43:41.000000000 -0400
+@@ -47,12 +47,12 @@
+ all: $(PROGRAMS)
+ 
+ tgtd: $(TGTD_OBJS)
+-	$(CC) $^ -o $@ $(LIBS)
++	$(CC) $^ $(LDFLAGS) -o $@ $(LIBS)
+ 
+ -include $(TGTD_DEP)
+ 
+ tgtadm: tgtadm.o
+-	$(CC) $^ -o $@
++	$(CC) $^ $(LDFLAGS) -o $@
+ 
+ -include tgtadm.d
+ 
+diff -ur tgt-20071227/usr/iscsi/iscsi_tcp.c tgt-20071227.mod/usr/iscsi/iscsi_tcp.c
+--- tgt-20071227/usr/iscsi/iscsi_tcp.c	2007-12-26 22:31:37.000000000 -0500
++++ tgt-20071227.mod/usr/iscsi/iscsi_tcp.c	2008-04-24 12:08:22.000000000 -0400
+@@ -216,6 +216,8 @@
+ 			close(fd);
+ 		else
+ 			nr_sock++;
++		if (nr_sock)
++			break;
+ 	}
+ 
+ 	freeaddrinfo(res0);

@@ -1,0 +1,108 @@
+#!/bin/sh
+
+
+mutex_down() {
+    while ! mkdir /var/$1.mutex 2>/dev/null ; do
+	echo "waiting for $1 mutex..."
+	sleep 1
+    done
+}
+
+mutex_up() {
+    rmdir /var/$1.mutex
+}
+
+device_config_exists() {
+    xenstore-exists "vm-data/transfer/$1"
+}
+
+config_exists() {
+    device="$1"
+    key="$2"
+    xenstore-exists "vm-data/transfer/${device}/${key}"
+}
+
+get_config() {
+    device="$1"
+    key="$2"
+    xenstore-read "vm-data/transfer/${device}/${key}"
+}
+
+get_ip_addr() {
+    # Get IPv4 address from ifconfig output
+    ipaddr=$(ifconfig $net_name | grep "inet addr:")
+    ipaddr=${ipaddr#*:}
+    ipaddr=${ipaddr%%" "*}
+    echo $ipaddr
+}
+
+xenstore_write_ready() {
+    device="$1"
+    xenstore-write "control/transfer-${device}-ready" "true"
+    xenstore-write data/updated "`date`"
+}
+
+xenstore_write_ssl_cert() {
+    device="$1"
+    certfile="$2"
+
+    # Line breaks have to be removed, as the xenstore-write command only accepts arguments on the command line.
+    xenstore-write -- control/transfer-${device}-ssl-cert "$(tr '\n' '|' < $certfile)"
+    xenstore-write data/updated "`date`"
+}
+
+xenstore_write_status() {
+    device="$1"
+    status="$2"
+    xenstore-write "control/transfer-$device-status" "$status"
+    xenstore-write data/updated "`date`"
+}
+
+xenstore_write_ip() {
+    net_name=$1
+
+    xenstore-write attr/${net_name} ""
+    xenstore-write attr/${net_name}/ip "$(get_ip_addr)"
+    xenstore-write data/updated "`date`"
+}
+
+xenstore_remove_ip() {
+    net_name=$1
+
+    xenstore rm attr/${net_name}/ip
+    xenstore rm attr/${net_name}
+    xenstore-write data/updated "`date`"
+}
+
+xenstore_read_log_flag() {
+  xenstore-read "vm-data/transfer/exposelogs" 2>/dev/null #hide error output - for situation, where that path does not exist yet
+}
+
+xenstore_write_log_flag() {
+  xenstore-write "data/transfer/exposelogs" "done" #write to a repsonse flag to signal completion
+}
+
+generate_ssl_keys() {
+    device="$1"
+    pemfile="$2"
+
+    keyfile="$pemfile.key"
+    certfile="$pemfile.cert"
+
+    openssl genrsa 1024 >"$keyfile"
+    openssl req -new -x509 -nodes -days 365 -key "$keyfile" >"$certfile" <<EOF
+UK
+Cambridgeshire
+Cambridge
+Citrix
+.
+$(get_ip_addr)
+.
+EOF
+
+    cat "$keyfile" "$certfile" >"$pemfile"
+
+    xenstore_write_ssl_cert "$device" "$certfile"
+
+    rm "$keyfile" "$certfile"
+}

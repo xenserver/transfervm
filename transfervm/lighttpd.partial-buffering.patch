@@ -1,0 +1,64 @@
+--- src/response.c	2010-03-13 20:02:08.000000000 +0000
++++ src/response.c	2010-03-13 23:41:58.000000000 +0000
+@@ -140,6 +142,21 @@
+ 		return HANDLER_FINISHED;
+ 	}
+ 
++//	log_error_write(srv, __FILE__, __LINE__,  "sxd",  "response_prepare", (int)con, (int)con->range_offset);
++
++	if (con->range_offset > 0)
++	{
++		switch(r = plugins_call_handle_physical(srv, con)) {
++		case HANDLER_FINISHED:
++		case HANDLER_WAIT_FOR_FD:
++		case HANDLER_ERROR:
++//			log_error_write(srv, __FILE__, __LINE__,  "sxd",  "physical", (int)con, (int)con->range_offset);
++			return r;
++ 		default:
++			return HANDLER_ERROR;
++		}
++	}
++
+ 	/* no decision yet, build conf->filename */
+ 	if (con->mode == DIRECT && con->physical.path->used == 0) {
+ 		char *qstr;
+@@ -445,7 +466,10 @@
+ 		case HANDLER_COMEBACK:
+ 		case HANDLER_WAIT_FOR_EVENT:
+ 		case HANDLER_ERROR:
+ 			return r;
++		case HANDLER_WAIT_FOR_FD:
++//			log_error_write(srv, __FILE__, __LINE__,  "sxd",  "WAIT_FOR_FD", (int)con, (int)con->range_offset);
++			return r;
+ 		default:
+ 			log_error_write(srv, __FILE__, __LINE__, "");
+ 			break;
+--- src/base.h	Sun Mar 14 12:37:36 2010 +0000
++++ src/base.h	Tue Mar 16 10:20:48 2010 +0000
+@@ -422,6 +422,8 @@
+ 	etag_flags_t etag_flags;
+ 
+ 	int conditional_is_valid[COMP_LAST_ELEMENT]; 
++
++	off_t range_offset;
+ } connection;
+ 
+ typedef struct {
+--- src/request.c	2010-03-13 15:02:08.000000000 -0500
++++ src/request.c	2010-04-11 17:32:02.000000000 -0400
+@@ -1140,6 +1140,7 @@
+ 			return 0;
+ 		}
+ 
++#if 0
+ 		/* divide by 1024 as srvconf.max_request_size is in kBytes */
+ 		if (srv->srvconf.max_request_size != 0 &&
+ 		    (con->request.content_length >> 10) > srv->srvconf.max_request_size) {
+@@ -1154,6 +1155,7 @@
+ 					"request-size too long:", con->request.content_length, "-> 413");
+ 			return 0;
+ 		}
++#endif
+ 
+ 
+ 		/* we have content */

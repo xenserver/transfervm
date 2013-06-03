@@ -1,0 +1,1818 @@
+#!/usr/bin/env python
+#
+# Transfer VM - VPX for exposing VDIs on XenServer 
+# Copyright (C) Citrix Systems, Inc.
+# 
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+#
+
+#
+# XenAPI plugin for exposing VDIs over the network.
+#
+
+import random
+import time
+import xmlrpclib
+
+import XenAPI
+import XenAPIPlugin
+
+from pluginlib import *
+configure_logging('transfer')
+from pluginlib import log
+
+from forest import Forest
+import vhd_bitmaps
+import vm_metadata
+import os
+import subprocess
+from time import gmtime, strftime
+import re
+import sys
+
+##### For Storage Scripts ######
+sys.path.append('/opt/xensource/sm/')
+import cleanup as sr_cleanup #to avoid name conflict with our cleanup
+##### Configuration
+
+# The key in other_config used to tag the template.  Note that we may see this
+# on VMs too, since it will be inherited across the VM.clone.  This doesn't
+# actually happen at the moment, because we're using VM.create, but if we
+# choose to implement VM.clone_without_disks, then this will show up again.
+UTILITY_VM = 'transfervm'
+# The key in other_config used to tag a VM.
+UTILITY_VM_CLONE = 'transfervm_clone'
+# The key in other_config used to tag VMs that the expose method is finished
+# with. Cleanup will not destroy halted VMs that don't have it set yet.
+UTILITY_VM_EXPOSEDONE = 'transfervm_exposedone'
+# Key used to indicate whether logs should automatically be copied off the transfervm
+# before unexposing.
+GET_LOG = 'get_log'
+
+# How long to wait for a VM to start up and report its IP, SSL certs and the
+# Ready flag before giving up.
+VM_START_TIMEOUT_SECONDS = 120
+
+#Currently the maximum snapshot tree depth supported by the transfervm
+MAX_SNAPSHOT_LENGTH = 14
+
+TRANSFER_VM_DIR = "/opt/xensource/packages/files/transfer-vm/"
+RPM_STATE_PATH = TRANSFER_VM_DIR + "rpm_change"
+TRANSFER_VM_UNINSTALL = TRANSFER_VM_DIR + "uninstall-transfer-vm.sh"
+TRANSFER_VM_INSTALL = TRANSFER_VM_DIR + "install-transfer-vm.sh"
+XS_INVENTORY_PATH = "/etc/xensource-inventory"
+
+##### Exceptions
+
+class ConfigurationError(PluginError):
+    """Raised when there is an inconsistency in the server state that makes further operations
+    dangerous.
+
+    Examples:
+    There are 0, or more than 1 VM templates with the tag transfervm.
+    There are more than 1 running VMs configured to expose the same vdi_uuid.
+    """
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+class VDINotFound(PluginError):
+    """There is no VDI with the uuid specified in RPC arguments on this host."""
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+class VDINotInUse(PluginError):
+    """The VDI with the uuid specified in RPC arguments is not mounted on this host."""
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+class VDIInUse(PluginError):
+    """The VDI with the uuid specified in RPC arguments is already mounted on this host."""
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+class LogsNotFound(PluginError):
+    """The plugin failed to download the TransferVM logs."""
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+class SnapshotTreeTooLong(PluginError):
+    """The plugin failed to expose a snapshot tree because it exceeds the maximum length supported"""
+    def __init__(self, session, *args):
+        cleanup(session, {})
+        PluginError.__init__(self, *args)
+
+class VMChangedDuringExport(PluginError):
+    """A VM has been snapshoted, or modified during the export process"""
+    def __init__(self, *args):
+        PluginError.__init__(self, *args)
+
+##### Helpers for generating connection parameters based on the VDI uuid.
+
+def blockdevice(userdevice):
+    """Returns the named block device identifier."""
+    return 'xvd' + chr(int(userdevice) + ord('a'))
+
+def iscsi_iqn(vdi_uuid, vm_uuid):
+    """Returns the iSCSI IQN for this vdi."""
+
+    # Warning: Do not include any shell metacharacters or other funny characters,
+    # as this is written to xenstore, passed around in shell scripts with questionable escaping.
+    return 'iqn.2010-01.com.citrix:vdi.%s.%s' % (vdi_uuid, vm_uuid)
+
+def iscsi_lun(userdevice):
+    """Returns the iSCSI LUN for this VDI.
+    """
+    return str(userdevice)
+
+def iscsi_sn(vdi_uuid):
+    """Returns the iSCSI LUN for this vdi.
+    """
+    return vdi_uuid
+
+def iscsi_id(vdi_uuid):
+    """Returns the iSCSI unique ID for the presented LUN. This is particularly
+    important as it's returned for a Page 83 VPD inquiry and will cause problems
+    with initiators connecting to two iSCSI targets if not unique.
+    The max length is 24 characters so the VDI_UUID must be sampled.
+    """
+    # Currently just returning first 24 characters - this works under the assumption
+    # that the randomness of each character is uniformly distributed.
+    return vdi_uuid.replace('-','')[0:24]
+
+    
+
+def url_path(vdi_uuid):
+    """Returns the URL path used to access the VDI over HTTP or BITS in the VM."""
+
+    # Warning: Do not include any shell metacharacters or other funny characters,
+    # as this is written to xenstore, passed around in shell scripts, and written to
+    # a lighttpd configuration file with questionable escaping.
+    return '/vdi_uuid_' + vdi_uuid
+
+def url_full(ip, port, username, password, use_ssl, vdi_uuid):
+    """Builds a full convenience URL to access the exposed VDI over HTTP or BITS."""
+    if use_ssl:
+        protocol = 'https://'
+    else:
+        protocol = 'http://'
+    return protocol + username + ':' + password + '@' + ip + ':' + port + url_path(vdi_uuid)
+
+def random_string(length):
+    """Generates a random hex string of the given length.
+    Python random generator ought to be good enough for short-lived passwords?
+    """
+    r = random.Random()
+    s = ''
+    for _ in xrange(length):
+        s += '0123456789abcdef'[r.randint(0, 15)]
+    return s
+
+def default_port(transfer_mode, use_ssl=False):
+    if transfer_mode == 'iscsi' and use_ssl:
+        return 3261
+    elif transfer_mode == 'iscsi':
+        return 3260
+    elif use_ssl:
+        return 443
+    else:
+        return 80
+
+def has_rpm_state_changed():
+    return os.path.isfile(RPM_STATE_PATH)
+
+def get_from_xensource_inventory(key):
+    if os.path.isfile(XS_INVENTORY_PATH) == False:
+        raise XenAPI.Failure(['NO_INVENTORY_FILE', "The XenSource Inventory file is missing."])
+    fh = open(XS_INVENTORY_PATH, "r")
+    data = fh.readlines()
+    fh.close()
+    for line in data:
+        if line.find(key) > -1:
+            values = line.split('\'')
+            return values[1]
+    return XenAPI.Failure('Error reading %s from %s' % (key, XS_INVENTORY_PATH))
+
+##### Helpers for managing Transfer utility VMs on the host
+
+def vms_with_records(session):
+    expr = 'field "is_a_template" = "false"'
+    return session.xenapi.VM.get_all_records_where(expr)
+
+def templates_with_records(session):
+    expr = 'field "is_a_template" = "true"'
+    return session.xenapi.VM.get_all_records_where(expr)
+
+def is_transfer_vm(vmrec):
+    """Returns true if the VM is a Transfer utility VM cloned from the template."""
+    return not vmrec['is_a_template'] and UTILITY_VM_CLONE in vmrec['other_config']
+
+def can_destroy_vm(vmrec):
+    return is_transfer_vm(vmrec) and UTILITY_VM_EXPOSEDONE in vmrec['other_config']
+
+def transfer_vm_template(vmrec):
+    """Returns true if the VM is a Transfer utility VM template."""
+    return vmrec['is_a_template'] and UTILITY_VM in vmrec['other_config'] and UTILITY_VM_CLONE not in vmrec['other_config'] and vmrec['VBDs'] != []
+
+def vms_with_records_exposing_vdi(session, vdi_uuid):
+    """Returns all VMs that are marked to be exposing the specified VDI."""
+    try:
+        vdi_uuids = vdi_uuid.split(',')
+        for vdi_u in vdi_uuids:
+            session.xenapi.VDI.get_by_uuid(vdi_u)
+    except XenAPI.Failure, e:
+        raise VDINotFound('VDI %s cannot be opened on this host. (%s)' % (vdi_u, e))
+    return [(vm, vmrec) for (vm, vmrec)
+            in vms_with_records(session).iteritems()
+            # Only consider VMs that have finished expose
+            if (is_transfer_vm(vmrec) and can_destroy_vm(vmrec) and
+                vmrec['other_config']['transfer_vdi_uuid'] == vdi_uuid)]
+
+
+def get_template_and_host(session, vdi_uuid, target_host_uuid):
+    if target_host_uuid is None:
+        # Select a host that can see both the VDI that we're exposing and
+        # a usable template.
+        vdi_ref = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+        sr_ref = session.xenapi.VDI.get_SR(vdi_ref)
+        host_ref = get_sr_master(session, sr_ref)
+        args = {}
+        tvm_template = session.xenapi.host.call_plugin(host_ref, 'transfer', 'prepare_transfervm_template', args)
+        
+        if tvm_template is not None:
+            return tvm_template, host_ref
+
+        raise XenAPI.Failure(['NO_TEMPLATE_AVAILABLE', tvm_template])
+    else:
+        # Find a template that works on the specified host.
+        host_ref = session.xenapi.host.get_by_uuid(target_host_uuid)
+        args = {}
+        tvm_template = session.xenapi.host.call_plugin(host_ref, 'transfer', 'prepare_transfervm_template', args)
+
+        transfer_templates = [vm[0] for vm
+                          in templates_with_records(session).iteritems()
+                          if transfer_vm_template(vm[1])]
+        if not transfer_templates:
+            raise ConfigurationError('No template with other_config key %s' % UTILITY_VM)
+
+        template, err = \
+            find_local_template(session, transfer_templates, host_ref)
+        if template is None:
+            raise XenAPI.Failure(["NO_TEMPLATE", "There has been an error installing the Transfer VM template - " + err])
+        else:
+            return template, host_ref
+
+def find_local_template(session, transfer_templates, host_ref):
+    """The given transfer_templates is a list of refs of all the
+    transfer templates that we can see.  We need one that can boot on the
+    given host."""
+    err = None 
+    for template_ref in transfer_templates:
+        try:
+            session.xenapi.VM.assert_can_boot_here(template_ref, host_ref)
+            return template_ref, None
+        except XenAPI.Failure, exn:
+            if exn.details[0] != 'VM_REQUIRES_SR' and err is None:
+                err = exn
+    return None, err
+
+def host_can_see(session, host_ref, sr_ref):
+    expr = 'field "host" = "%s" and field "SR" = "%s"' % (host_ref, sr_ref)
+    log.debug("host_can_see: %s", expr)
+    pbds = session.xenapi.PBD.get_all_records_where(expr)
+    for pbd in pbds.itervalues():
+        if pbd['currently_attached']:
+            return True
+    return False
+
+def clone_utility_vm(session, template, vdi_uuids):
+    """Returns a reference to a brand new Transfer utility VM cloned from the template for exposing the VDI."""
+    template_rec = session.xenapi.VM.get_record(template)
+    vm_rec = dict(template_rec)
+    s = len(vdi_uuids) > 1 and 's' or ''
+    vm_rec['name_label'] = \
+        'Transfer VM for VDI%s %s' % (s, '+'.join(vdi_uuids))
+    vm_rec['name_description'] = ''
+    vm_rec['VBDs'] = []
+    vm_rec['other_config'] = {'HideFromXenCenter': 'true',
+                              UTILITY_VM_CLONE: 'true'}
+    vm = session.xenapi.VM.create(vm_rec)
+    session.xenapi.VM.provision(vm)
+
+    log.info('xapi transfer plugin expose: Cloned a new Transfer VM %r from template to expose VDIs %r.' % (session.xenapi.VM.get_uuid(vm), vdi_uuids))
+
+    for vbd in template_rec['VBDs']:
+        vbd_rec = session.xenapi.VBD.get_record(vbd)
+        new_vbd_rec = dict(vbd_rec)
+        new_vbd_rec['VM'] = vm
+        new_vbd_rec['mode'] = 'RO'
+        session.xenapi.VBD.create(new_vbd_rec)
+
+    return vm
+
+
+##### Helpers for configuring a Transfer utility VM before startup
+
+def get_management_pifs(session):
+    result = []
+    host_ref = session.xenapi.session.get_this_host(session.handle)
+    pifs = session.xenapi.host.get_PIFs(host_ref)
+    for pif_ref in pifs:
+        pif = ignore_failure(session.xenapi.PIF.get_record,
+                                       pif_ref)
+        if pif and pif['management']:
+            result.append(pif)
+    return result
+
+def configure_network(session, vm, network_uuid, network_mac):
+    """Adds a network interface to the Transfer utility VM."""
+
+    if network_uuid == 'management':
+        management_pifs = get_management_pifs(session)
+        if len(management_pifs) != 1:
+            raise PluginError(
+                'Cannot find unique management PIF on this host!')
+        network = management_pifs[0]['network']
+    else:
+        network = session.xenapi.network.get_by_uuid(network_uuid)
+
+    session.xenapi.VIF.create({'device': '0',
+                               'network': network,
+                               'VM': vm,
+                               'MAC': network_mac,
+                               'MTU': '1504',
+                               'other_config': {},
+                               'qos_algorithm_type': '',
+                               'qos_algorithm_params': {}})
+
+def attach_vdis(session, vm, vdi_uuids, read_only):
+    """Create a VBD for each given VDI, to attach it to the Transfer VM."""
+    result = {}
+    for vdi_uuid in vdi_uuids:
+        result[vdi_uuid] = attach_vdi(session, vm, vdi_uuid, read_only)
+    return result
+
+def attach_vdi(session, vm, vdi_uuid, read_only):
+    """Create a VBD to attach the given VDI to the Transfer VM."""
+    vdi = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+    if read_only:
+        mode = 'RO'
+    else:
+        mode = 'RW'
+    log.debug("Attaching %s with mode %s", vdi_uuid, mode)
+    return session.xenapi.VBD.create({'VM': vm,
+                                      'VDI': vdi,
+                                      'userdevice': 'autodetect',
+                                      'bootable': False,
+                                      'mode': mode,
+                                      'type': 'Disk',
+                                      'unpluggable': False,
+                                      'empty': False,
+                                      'other_config': {},
+                                      'qos_algorithm_type': '',
+                                      'qos_algorithm_params': {}})
+
+def is_sparse(session, vdi_uuid):
+    vdi_ref = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+    vdi_rec = session.xenapi.VDI.get_record(vdi_ref)
+    sr_rec = session.xenapi.SR.get_record(vdi_rec['SR'])
+    if sr_rec['type'] in ['nfs', 'ext']:
+        return True
+    if sr_rec['type'].startswith('lvm') and (vdi_rec['sm_config'].get('type') == 'vhd' or \
+            vdi_rec['sm_config'].get('vdi_type') == 'vhd'):
+        return True
+    return False
+
+
+def add_vm_config_value(session, vm, vdi_uuid, device, key, value):
+    """Write the given key-value pair to VM.other_config and VM.xenstore_data.
+
+    The key is taken to be specific to the given VDI/device, and so is
+    written in the VDI-specific area of other_config, and a device-specific
+    path in xenstore_data.
+
+    The config is duplicated in other_config and xenstore_data because the VM
+    can onyl read from XenStore, but it could also write there and mess up the
+    data. The transfer plugin therefore uses other_config to keep track of the
+    VMs and VDIs.
+    """
+    xenstorepath = 'vm-data/transfer/%s/' % device
+    oc_key = 'transfer_%s_%s' % (key, vdi_uuid)
+    strvalue = sanitize_string(value)
+
+    session.xenapi.VM.add_to_other_config(vm, oc_key, strvalue)
+    session.xenapi.VM.add_to_xenstore_data(vm, xenstorepath + key, strvalue)
+
+def add_vm_config_value_oc(session, vm, key, value):
+    """Write the given key-value pair to VM.other_config."""
+    oc_key = 'transfer_%s' % key
+    strvalue = sanitize_string(value)
+    session.xenapi.VM.add_to_other_config(vm, oc_key, strvalue)
+
+def add_vm_config_value_all_devices(session, vm, devices, key, value):
+    """Write the given key-value pair to VM.other_config and VM.xenstore_data,
+    duplicating it across the configuration for each device.  This allows
+    us, in the future, to have different configuration per device, though
+    we're not using that at the moment."""
+    add_vm_config_value_oc(session, vm, key, value)
+    strvalue = sanitize_string(value)
+    for device in devices:
+        xenstorepath = 'vm-data/transfer/%s/%s' % (device, key)
+        session.xenapi.VM.add_to_xenstore_data(vm, xenstorepath, strvalue)
+
+def sanitize_string(s):
+    if isinstance(s, basestring):
+        return s  # Do not fiddle with the case of actual strings
+    else:
+        return str(s).lower()  # Lowercase booleans and other data type string values.
+
+
+def write_vbd_config(session, vm, vbd, vdi_uuid, vhd_details, expose_args):
+    """
+    Write the configuration for the Transfer VM exposing the given VDI
+    through the given VBD based on the arguments to the expose call.
+    """
+    userdevice = session.xenapi.VBD.get_record(vbd)['userdevice']
+    device = blockdevice(userdevice)
+    vdi_ref = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+    vdi_size = session.xenapi.VDI.get_virtual_size(vdi_ref)
+
+    def add(k, v):
+        add_vm_config_value(session, vm, vdi_uuid, device, k, v)
+
+    add('device', device)
+    add('userdevice', userdevice)
+    add('vdi_size', vdi_size)
+
+    if expose_args['transfer_mode'] in ['http', 'bits', 'http_pull']:
+        add('url_path', url_path(vdi_uuid))
+        add('backend_sparse', is_sparse(session, vdi_uuid))
+        if 'vhd_blocks' in vhd_details:
+            add('vhd_blocks', vhd_details['vhd_blocks'])
+            add('vhd_uuid', vhd_details['vhd_uuid'])
+        if 'vhd_puuid' in vhd_details:
+            add('vhd_puuid', vhd_details['vhd_puuid'])
+            add('vhd_ppath', vhd_details['vhd_ppath'])
+    elif expose_args['transfer_mode'] == 'iscsi':
+        vm_uuid = session.xenapi.VM.get_uuid(vm)
+        add('iscsi_iqn', iscsi_iqn(vdi_uuid, vm_uuid))
+        add('iscsi_lun', iscsi_lun(userdevice))
+        add('iscsi_sn', iscsi_sn(vdi_uuid))
+        add('iscsi_id', iscsi_id(vdi_uuid))
+    else:
+        raise ArgumentError('Unknown transfer mode %r' % expose_args['transfer_mode'])
+
+    return device
+
+def scan_vdi_sr(session, vdi_uuid):
+    """Given a VDI_UUID, find which SR the vdi resides on and kicks
+       off a scan on the SR to restart any aborted GC/Other jobs.
+    """
+    vdi_ref = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+    sr_ref = session.xenapi.VDI.get_SR(vdi_ref)
+    session.xenapi.SR.scan(sr_ref) 
+
+def scan_vdi_srs(session, vdi_uuids):
+    """Given a list of VDI's - this method starts a scan off on each
+       this ensures that any GC or other SR operations get restarted
+       if aborted on exposing a VDI
+    """
+    for vdi_uuid in vdi_uuids:
+        scan_vdi_sr(session, vdi_uuid)
+
+def write_vm_config(session, vm, vbds, expose_args):
+    """
+    Write the configuration for the Transfer VM based on the arguments to the
+    expose call.
+    """
+
+    if 'extra_info' in expose_args:
+        for k, v in expose_args['extra_info'].iteritems():
+            add_vm_config_value_oc(session, vm, 'extra_info_%s' % k, v)
+
+    add_vm_config_value_oc(session, vm, 'vdi_uuid',
+                           ','.join(expose_args['vdi_uuid']))
+
+    write_network_config(session, vm, expose_args)
+
+    devices = write_device_config(session, vm, vbds, expose_args)
+
+    if 'non_leaf_config' in expose_args and expose_args['non_leaf_config']:
+        write_non_leaf_config(session, vm, expose_args)
+
+    write_compat_config(session, vm, vbds, devices, expose_args)
+
+    return devices
+
+def write_network_config(session, vm, expose_args):
+    """Write network config settings.  This is only written to XenStore; the
+    plugin does not need it any longer.  Network MAC configuration is not
+    saved here: it is set when creating the VIF.
+    """
+    def add(k, v):
+        session.xenapi.VM.add_to_xenstore_data(
+            vm, 'vm-data/transfer/eth0/%s' % k, v)
+
+    if expose_args['network_mode'] == 'dhcp':
+        add('config_mode', 'dhcp')
+    else:
+        add('config_mode', 'manual')
+        add('ip', expose_args['network_ip'])
+        add('mask', expose_args['network_mask'])
+        add('gateway', expose_args['network_gateway'])
+
+def write_device_config(session, vm, vbds, expose_args):
+    devices = []
+    vdi_uuids = expose_args['vdi_uuid']
+    for i, vdi_uuid in zip(xrange(len(vdi_uuids)), vdi_uuids):
+        vbd = vbds[vdi_uuid]
+        vhd_details = {}
+
+        def add(k):
+            vhd_details[k] = expose_args[k][i]
+
+        if 'vhd_blocks' in expose_args and len(expose_args['vhd_blocks']) > 0:
+            add('vhd_blocks')
+            add('vhd_uuid')
+        if 'vhd_puuid' in expose_args and len(expose_args['vhd_puuid']) > 0:
+            add('vhd_puuid')
+            add('vhd_ppath')
+
+        device = \
+            write_vbd_config(session, vm, vbd, vdi_uuid, vhd_details,
+                             expose_args)
+        expose_args['device_%s' % vdi_uuid] = device
+        devices.append(device)
+
+    all_devices = ','.join(devices)
+    add_vm_config_value_oc(session, vm, 'all_devices', all_devices)
+    session.xenapi.VM.add_to_xenstore_data(
+        vm, 'vm-data/transfer/all_devices', all_devices)
+    session.xenapi.VM.add_to_xenstore_data(
+        vm, 'vm-data/transfer/last_device', devices[-1])
+
+    def add_all_devices(k, v):
+        add_vm_config_value_all_devices(session, vm, devices, k, v)
+
+    add_all_devices('port', expose_args['network_port'])
+    add_all_devices('username', random_string(16))
+    add_all_devices('password', random_string(16))
+    add_all_devices('use_ssl', expose_args['use_ssl'])
+    # SSL keys and cert are generated in the VM itself, as these depend on its
+    # IP address.
+    add_all_devices('transfer_mode', expose_args['transfer_mode'])
+
+    if expose_args['transfer_mode'] == "iscsi":
+        xenstoresslpath = 'vm-data/transfer/use_ssl'
+        session.xenapi.VM.add_to_xenstore_data(vm, xenstoresslpath, str(expose_args['use_ssl']))
+
+    if expose_args['timeout_minutes']:
+        add_all_devices('timeout', expose_args['timeout_minutes'])
+
+    if 'src_urls' in expose_args:
+        write_puller_config(session, vm, expose_args, vdi_uuids, devices)
+
+    return devices
+
+
+def write_puller_config(session, vm, expose_args, vdi_uuids, devices):
+    src_urls = expose_args['src_urls']
+    src_certs = \
+        'src_certs' in expose_args and expose_args['src_certs'] or None
+    for i, vdi_uuid in zip(xrange(len(vdi_uuids)), vdi_uuids):
+        def add(k, v):
+            add_vm_config_value(session, vm, vdi_uuid, devices[i], k, v)
+
+        add('src_url', src_urls[i])
+        if src_certs is not None:
+            add('src_cert', src_certs[i])
+
+
+def write_non_leaf_config(session, vm, expose_args):
+    non_leaf_vdi_uuids = ','.join(expose_args['non_leaf_config'].iterkeys())
+    add_vm_config_value_oc(session, vm, 'non_leaf_vdi_uuids',
+                           non_leaf_vdi_uuids)
+    session.xenapi.VM.add_to_xenstore_data(
+        vm, 'vm-data/transfer/non_leaf_vdi_uuids', non_leaf_vdi_uuids)
+    
+    for vdi_uuid, vhd_conf in expose_args['non_leaf_config'].iteritems():
+        def add(k, v):
+            add_vm_config_value(session, vm, vdi_uuid, vdi_uuid, k, v)
+        add('url_path', url_path(vdi_uuid))
+        add('vdi_size', vhd_conf['vdi_size'])
+        add('vhd_blocks', vhd_conf['vhd_blocks'])
+        add('vhd_block_map',
+            block_map_to_string(expose_args, vhd_conf['vhd_block_map']))
+        add('vhd_uuid', vhd_conf['vhd_uuid'])
+        if 'vhd_puuid' in vhd_conf:
+            add('vhd_puuid', vhd_conf['vhd_puuid'])
+            add('vhd_ppath', vhd_conf['vhd_ppath'])
+
+
+def block_map_to_string(expose_args, m):
+    return ';'.join(['%s:%s' % (expose_args['device_%s' % k], v)
+                     for k, v in m.iteritems()])
+
+
+def write_compat_config(session, vm, vbds, devices, expose_args):
+    """
+    For the first VDI in our list, write keys that don't have the VDI UUID in
+    them.  This means that the API is simpler (and backwards compatible) for
+    callers using just one VDI per Transfer VM.
+    """
+    
+    def add(k, v):
+        add_vm_config_value_oc(session, vm, k, v)
+
+    vdi_uuids = expose_args['vdi_uuid']
+    vdi_uuid0 = vdi_uuids[0]
+    device0 = devices[0]
+    userdevice0 = \
+        session.xenapi.VBD.get_record(vbds[vdi_uuid0])['userdevice']
+    add('device', device0)
+    add('userdevice', userdevice0)
+
+    if expose_args['transfer_mode'] in ['http', 'bits']:
+        add('backend_sparse', is_sparse(session, vdi_uuid0))
+        add('url_path', url_path(vdi_uuid0))
+    elif expose_args['transfer_mode'] == 'iscsi':
+        vm_uuid = session.xenapi.VM.get_uuid(vm)
+        add('iscsi_iqn', iscsi_iqn(vdi_uuid0, vm_uuid))
+        add('iscsi_lun', iscsi_lun(userdevice0))
+        add('iscsi_sn', iscsi_sn(vdi_uuid0))
+        add('iscsi_id', iscsi_id(vdi_uuid0))
+    elif expose_args['transfer_mode'] == 'http_pull':
+        pass
+    else:
+        raise ArgumentError('Unknown transfer mode %r' %
+                            expose_args['transfer_mode'])
+
+
+##### Helpers for reading connection parameters and configuration from a running Transfer utility VM
+
+def poll_until_true_value(func):
+    """Decorator for Xenstore read functions.
+    Does the read in a loop until a non-None value is received, or raises ConfigurationError on timeout.
+    """
+    def decorated(session, vm, device=None):
+        starttime = time.time()
+        while True:
+            value = func(session, vm, device)
+            if value:
+                return value
+            if time.time() - starttime > VM_START_TIMEOUT_SECONDS:
+                power = session.xenapi.VM.get_power_state(vm)
+                vmid = session.xenapi.VM.get_uuid(vm)
+                if power == 'Running':
+                    raise ConfigurationError('Transfer VM %r started, but did not respond in %d seconds, giving up.' % (vmid, VM_START_TIMEOUT_SECONDS))
+                else:
+                    raise ConfigurationError('Transfer VM %r failed to start in %d seconds, still in power_state %r, giving up.' % (vmid, VM_START_TIMEOUT_SECONDS, power))
+            time.sleep(1)
+    return decorated
+
+@poll_until_true_value
+def wait_config_ready(session, vm, devices):
+    """Returns True if the ready flag is set for the exposed device in the VM xenstore.
+    This means that the VM and network server startup is done.
+    """
+    metrics = session.xenapi.VM.get_guest_metrics(vm)
+    try:
+        other = session.xenapi.VM_guest_metrics.get_other(metrics)
+        for device in devices:
+            ready = other.get('transfer-%s-ready' % device, 'false')
+            if ready.lower() != 'true':
+                return False
+        return True
+    except:
+        return False
+
+@poll_until_true_value
+def blocking_read_ip_address(session, vm, _):
+    """Reads and returns the IP address of the VM's first network interface from xenstore,
+    or None if it could not be read.
+    """
+    try:
+        metrics = session.xenapi.VM.get_guest_metrics(vm)
+        networks = session.xenapi.VM_guest_metrics.get_networks(metrics)
+        return networks.get('0/ip', None)
+    except:
+        return None
+
+@poll_until_true_value
+def blocking_read_ssl_cert_config(session, vm, device):
+    """Reads and returns the SSL certificate generated by a VM from its xenstore."""
+    try:
+        metrics = session.xenapi.VM.get_guest_metrics(vm)
+        other = session.xenapi.VM_guest_metrics.get_other(metrics)
+        return other.get('transfer-%s-ssl-cert' % device, None)
+    except:
+        return None
+
+
+def read_status(session, vm, devices, config):
+    try:
+        metrics = session.xenapi.VM.get_guest_metrics(vm)
+        other = session.xenapi.VM_guest_metrics.get_other(metrics)
+        for device in devices:
+            status = other.get('transfer-%s-status' % device, None)
+            if status:
+                config['status_%s' % device] = status
+    except Exception, exn:
+        log.debug(exn, exn)
+
+
+def read_vm_config(session, vm, vdi_uuids_str):
+    """Reads the static configuration of the VDI exposed using this Transfer VM from its other_config."""
+    vmrec = session.xenapi.VM.get_record(vm)
+    oc = vmrec['other_config']
+    vhd_str = 'transfer_vhd_uuid_%s' % vdi_uuids_str
+    if oc['transfer_vdi_uuid'] != vdi_uuids_str and oc[vhd_str] != vdi_uuids_str:
+        raise ConfigurationError('The utility VM is configured to expose VDI %s, not %s.' %
+                                 (oc['transfer_vdi_uuid'], vdi_uuids_str))
+    conf = {'vdi_uuid': vdi_uuids_str }
+
+    def copy_conf(k):
+        conf[k] = oc['transfer_%s' % k]
+
+    copy_conf('transfer_mode')
+    copy_conf('port')
+    copy_conf('use_ssl')
+    copy_conf('username')
+    copy_conf('password')
+    copy_conf('device')
+    copy_conf('all_devices')
+
+    if oc['transfer_transfer_mode'] in ['http', 'bits']:
+        copy_conf('url_path')
+    elif oc['transfer_transfer_mode'] == 'iscsi':
+        copy_conf('iscsi_iqn')
+        copy_conf('iscsi_lun')
+        copy_conf('iscsi_sn')
+        copy_conf('iscsi_id')
+    elif oc['transfer_transfer_mode'] == 'http_pull':
+        pass
+    else:
+        raise ArgumentError('Unknown transfer mode %r' %
+                            oc['transfer_transfer_mode'])
+
+    vdi_uuids = vdi_uuids_str.split(',')
+
+    for vdi_uuid in vdi_uuids:
+        copy_conf('device_%s' % vdi_uuid)
+        if oc['transfer_transfer_mode'] in ['http', 'bits', 'http_pull']:
+            copy_conf('url_path_%s' % vdi_uuid)
+        elif oc['transfer_transfer_mode'] == 'iscsi':
+            copy_conf('iscsi_iqn_%s' % vdi_uuid)
+            copy_conf('iscsi_lun_%s' % vdi_uuid)
+            copy_conf('iscsi_sn_%s' % vdi_uuid)
+            copy_conf('iscsi_id_%s' % vdi_uuid)
+        else:
+            assert(False)
+
+    if 'transfer_non_leaf_vdi_uuids' in oc:
+        copy_conf('non_leaf_vdi_uuids')
+        for vdi_uuid in oc['transfer_non_leaf_vdi_uuids'].split(','):
+            copy_conf('url_path_%s' % vdi_uuid)
+
+    copy_extra_info(oc, conf)
+
+    return conf
+
+
+def copy_extra_info(oc, conf):
+    for k in oc.iterkeys():
+        if k.startswith('transfer_extra_info_'):
+            conf[k[len('transfer_extra_info_'):]] = oc[k]
+
+
+def find_any_transfervm(session):
+    for vm_ref, vm_rec in vms_with_records(session).iteritems():
+        if is_transfer_vm(vm_rec):
+            return vm_ref, vm_rec, vm_rec['other_config']['transfer_vdi_uuid']
+    raise ArgumentError('No Transfer VMs are running')
+
+
+def find_exposing_vm(session, args):
+
+    vm_uuid = validate_exists(args, 'record_handle', '')
+    if vm_uuid == 'any':
+        return find_any_transfervm(session)
+    elif vm_uuid:
+        vm_ref = ignore_failure(session.xenapi.VM.get_by_uuid, vm_uuid)
+        if not vm_ref:
+            raise ArgumentError(
+                'VM %s is not a Transfer VM' % vm_uuid)
+        vm_rec = session.xenapi.VM.get_record(vm_ref)
+        if not is_transfer_vm(vm_rec):
+            raise ArgumentError(
+                'VM %s is not a Transfer VM' % vm_uuid)
+        vdi_uuid = vm_rec['other_config']['transfer_vdi_uuid']
+    else:
+        vdi_uuid = validate_exists(args, 'vdi_uuid')
+        exposing_vms = vms_with_records_exposing_vdi(session, vdi_uuid)
+        if not exposing_vms:
+            vm_ref = None
+            vm_rec = None
+        elif len(exposing_vms) > 1:
+            raise ConfigurationError('Multiple VMs %r are marked as exposing VDI %r in their other_config.' % ([v[1]['uuid'] for v in exposing_vms], vdi_uuid))
+        else:
+            vm_ref, vm_rec = exposing_vms[0]
+
+    return vm_ref, vm_rec, vdi_uuid
+
+
+##### Transfer plugin public RPC methods
+
+@log_exceptions
+def expose(session, args):
+    """Exposes a number of VDIs on the network as a iSCSI target or HTTP,
+    HTTPS, or BITS URL.
+    The VDIs are mounted in an utility VM that runs the network servers.
+
+    For spec, see http://scale.ad.xensource.com/confluence/display/engp/XenAPI+transfer+plugin+API+Specification
+    """
+    parsedargs = {}
+    parsedargs['transfer_mode'] = validate_in_list(args, 'transfer_mode', ['bits', 'http', 'http_pull', 'iscsi'])
+    parsedargs['vdi_uuid'] = validate_exists(args, 'vdi_uuid').split(',')
+
+    parsedargs[GET_LOG] = validate_exists(args, GET_LOG, 'false')
+    
+    parsedargs['expose_vhd'] = validate_bool(args, 'expose_vhd', 'false')
+
+    parse_network_args(args, parsedargs)
+    parse_misc_expose_args(args, parsedargs)
+
+    if parsedargs['transfer_mode'] in ['http', 'bits']:
+        parse_vhd_args(args, parsedargs)
+    elif parsedargs['transfer_mode'] == 'iscsi':
+        if parsedargs['network_port'] != default_port('iscsi', parsedargs['use_ssl']):
+            raise ArgumentError('Port %r is not supported for the iSCSI transfer mode, can only use the system default %r.' % (parsedargs['network_port'], default_port('iscsi')))
+    elif parsedargs['transfer_mode'] == 'http_pull':
+        parse_puller_args(args, parsedargs)
+
+    if parsedargs['expose_vhd']:
+        leaf_vdi_ref = session.xenapi.VDI.get_by_uuid(parsedargs['vdi_uuid'][0])
+        #Note: vhd_blocks is a list
+        parsedargs['vhd_blocks'] = [vhd_bitmaps.get_merged_bitmap(session, leaf_vdi_ref)]
+        log.debug("vhd_blocks = %s" % parsedargs['vhd_blocks'])
+        #Set the VHD UUID as the VDI UUID since the VHD is fictional 
+        # representing the route to the base disk
+        parsedargs['vhd_uuid'] = parsedargs['vdi_uuid']
+
+    return expose_(session, parsedargs)
+
+
+def expose_(session, parsedargs):
+
+    cleanup(session, {})
+
+    template_ref, host_ref = \
+        get_template_and_host(session,
+                              parsedargs['vdi_uuid'][0],
+                              parsedargs['target_host_uuid'])
+    vm = clone_utility_vm(session, template_ref, parsedargs['vdi_uuid'])
+    try:
+        configure_network(session, vm, parsedargs['network_uuid'], parsedargs['network_mac'])
+        vbds = attach_vdis(session, vm, parsedargs['vdi_uuid'], parsedargs['read_only'])
+        devices = write_vm_config(session, vm, vbds, parsedargs)
+        session.xenapi.VM.start_on(vm, host_ref, False, False)
+        vm_uuid = session.xenapi.VM.get_uuid(vm)
+        # wait until it has booted up and has joined the network
+        blocking_read_ip_address(session, vm)
+        wait_config_ready(session, vm, devices)
+    finally:
+        session.xenapi.VM.add_to_other_config(vm, UTILITY_VM_EXPOSEDONE, 'true')
+        session.xenapi.VM.add_to_other_config(vm, GET_LOG, parsedargs[GET_LOG])
+    log.info('xapi transfer plugin expose: exposed VDI %r using VM %r.', parsedargs['vdi_uuid'], vm_uuid)
+    return vm_uuid
+
+def parse_network_args(args, parsedargs):
+    parsedargs['network_mode'] = validate_in_list(args, 'network_mode',
+                                                  ['dhcp', 'manual', 'manual_range'], 'dhcp')
+    parsedargs['use_ssl'] = validate_bool(args, 'use_ssl', 'false')
+    parsedargs['network_port'] = \
+        validate_nonnegative_int(args, 'network_port',
+                                 default_port(parsedargs['transfer_mode'],
+                                              parsedargs['use_ssl']))
+
+    def copy(k, d = None):
+        parsedargs[k] = validate_exists(args, k, d)
+
+    def validate_address(k, addr_type = "IP"):
+        if addr_type == 'IP':
+            validate_ip(parsedargs[k])
+        elif addr_type == 'NETMASK':
+            validate_netmask(parsedargs[k])
+
+    copy('network_uuid')
+    copy('network_mac', '')
+
+    if parsedargs['network_mode'] == 'manual':
+        copy('network_ip')
+        validate_address('network_ip')
+        copy('network_mask')
+        validate_address('network_mask', 'NETMASK')
+        copy('network_gateway')
+        validate_address('network_gateway')
+        
+    if parsedargs['network_mode'] == 'manual_range':
+        copy('network_ip_start')
+        validate_address('network_ip_start')
+        copy('network_ip_end')
+        validate_address('network_ip_end')
+        copy('network_mask')
+        validate_address('network_mask', 'NETMASK')
+        copy('network_gateway')
+        validate_address('network_gateway')
+
+def parse_misc_expose_args(args, parsedargs):
+    parsedargs['read_only'] = validate_bool(args, 'read_only', 'false')
+    if (parsedargs['transfer_mode'] == 'http_pull' and
+        parsedargs['read_only']):
+        raise ArgumentError('read_only=true cannot be used with transfer_mode=http_pull')
+    parsedargs['timeout_minutes'] = \
+        validate_nonnegative_int(args, 'timeout_minutes', '0')
+    parsedargs['target_host_uuid'] = optional(args, 'target_host_uuid')
+
+
+def parse_vhd_args(args, parsedargs):
+    vdi_count = len(parsedargs['vdi_uuid'])
+    def process(s):
+        p = validate_exists(args, s, "")
+        if p == '':
+            parsedargs[s] = []
+        else:
+            parsedargs[s] = p.split(',')
+            n = len(parsedargs[s])
+            if n != vdi_count:
+                raise ConfigurationError(
+                    'List %s must have one entry per VDI' % s)
+    process('vhd_blocks')
+    process('vhd_uuid')
+    process('vhd_puuid')
+    process('vhd_ppath')
+    if len(parsedargs['vhd_blocks']) != len(parsedargs['vhd_uuid']):
+        raise ConfigurationError(
+            'vhd_uuid must have same number of entries as vhd_blocks')
+    if len(parsedargs['vhd_ppath']) != len(parsedargs['vhd_puuid']):
+        raise ConfigurationError(
+            'vhd_ppath must have same number of entries as vhd_puuid')
+    if len(parsedargs['vhd_puuid']) > len(parsedargs['vhd_blocks']):
+        raise ConfigurationError(
+            'Cannot use vhd_ppath/vhd_puuid without vhd_blocks/vhd_uuid')
+
+
+def parse_puller_args(args, parsedargs):
+    parsedargs['src_urls'] = exists(args, 'src_urls').split(',')
+    if 'src_certs' in args:
+        parsedargs['src_certs'] = args['src_certs'].split(',')
+
+
+@log_exceptions
+def unexpose(session, args):
+    """Unexposes a VDI by shutting down its Transfer VM.
+
+    For spec, see http://scale.ad.xensource.com/confluence/display/engp/XenAPI+transfer+plugin+API+Specification
+    """
+
+    #A string of vdi_uuids may be returned in the case of 
+    #multiple snapshots beings exposed.
+    vm, vmrec, vdi_uuids = find_exposing_vm(session, args)
+    if not vm:
+        raise VDINotInUse(
+            'VDI %s is not exposed by any utility VM.' % vdi_uuids)
+    
+    other_config = vmrec['other_config']
+    if other_config[GET_LOG] == "true":
+        log.info("Get Log is set to True - making the call to extract logs now")
+        save_logs(session, args)
+	
+    while not can_destroy_vm(vmrec):
+        time.sleep(1)
+    try:
+        session.xenapi.VM.clean_shutdown(vm)
+        while session.xenapi.VM.get_power_state(vm) == 'Running':
+            time.sleep(1)
+    except Exception, exn:
+        log.warn('xapi transfer plugin unexpose: caught exception %s' %
+                 str(exn))
+    log.debug("about to cleanup")
+    cleanup(session, args)
+    return 'OK'
+
+def download(url, localfile):
+    """Copy the contents of a file from a given URL to a local file."""
+    import urllib
+    webfile = urllib.urlopen(url)
+    localfile = open(localfile, 'w')
+    localfile.write(webfile.read())
+    webfile.close()
+    localfile.close()
+    return "Downloaded"
+
+def get_log_url(session, vm, vdi_uuid):
+    tvm_log_name = "log"
+    config = read_vm_config(session, vm, vdi_uuid)
+    config['ip'] = blocking_read_ip_address(session, vm)
+    if config['use_ssl'] == "true":
+        protocol = "https://"
+    else:
+        protocol = "http://"
+
+    url = (protocol + config['username'] + ":" + config['password'] + "@" + config['ip'] + ":" + config['port'] + "/" + tvm_log_name)
+    log.info("Log URL: " + url)
+    return url
+
+@log_exceptions
+def save_logs(session, args):
+    """Saves Lighttpd logs from the transferVM onto Dom0 so that they can be retrieved for debug"""
+    vm, _, vdi_uuid = find_exposing_vm(session, args)
+    if not vm:
+        raise VDINotInUse(
+            'VDI %s is not exposed by any utility VM.' % vdi_uuid)
+    domid = session.xenapi.VM.get_domid(vm)
+    log.info("Writing to xenstore to signal to TVM")
+    os.system(("xenstore-write /local/domain/%s/vm-data/transfer/exposelogs 'yes'" % domid))
+    url = get_log_url(session, vm, vdi_uuid)
+    time_now = strftime("%d-%m-%y-%H-%M-%S", gmtime())
+    log_dir = "/var/log/transfervm/" 
+    log_name = "tvm_log_" + vdi_uuid + "_timestamp_" + time_now 
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    remote_response = "false"
+    timeout = 30 #A timeout in seconds
+    count = 0
+    log.info("Checking for a response from the TVM...")
+    while (remote_response != "done") and (count < timeout):
+        stdout_handle = os.popen(("xenstore-read /local/domain/%s/data/transfer/exposelogs" % domid), "r")
+        remote_response = stdout_handle.read().strip()
+        time.sleep(1)
+        count += 1
+    
+    if remote_response != "done":
+        raise LogsNotFound("The logs for the TransferVM serving vdi_uuid_%s were not able to be downloaded due to the TransferVM not signaling successful export" % vdi_uuid)
+    
+    log.info("Making a call to download the exposed logs " + url)
+    download(url, log_dir + log_name)
+    return url
+
+   
+
+@log_exceptions
+def cleanup(session, _):
+    """Deletes all halted non-template VMs with the Transfer VM tag.
+    These are utility VMs left over from transfer sessions that were not
+    unexposed properly.
+    """
+    return cleanup_(session, False)
+
+
+@log_exceptions
+def cleanup_force(session, _):
+    """Deletes all halted and non-halted non-template VMs with the Transfer VM
+    tag.  These are utility VMs left over from transfer sessions that were not
+    unexposed properly, or potentially VMs with transfers still in progress.
+    """
+    return cleanup_(session, True)
+
+
+def cleanup_(session, force):
+    title = force and 'cleanup_force' or 'cleanup'
+    log.info('%s: Starting...', title)
+    for vm, vmrec in vms_with_records(session).iteritems():
+        if can_destroy_vm(vmrec):
+            if force and vmrec['power_state'] != 'Halted':
+                log.info('%s: Shutting down VM %r...', title, vm)
+                ignore_failure(session.xenapi.VM.hard_shutdown, vm)
+                log.info('%s: Shutting down VM %r done.', title, vm)
+            if force or vmrec['power_state'] == 'Halted':
+                log.info('%s: Destroying VM %r...', title, vm)
+                ignore_failure(session.xenapi.VM.destroy, vm)
+                log.info('%s: VM %r destroyed.', title, vm)
+            else:
+                log.info('%s: Skipping VM %r...', title, vm)
+        elif is_transfer_vm(vmrec):
+            log.info('%s: Skipping VM %r...', title, vm)
+    log.info('%s: done.', title)
+    clean_sr_config(session)
+    return 'OK'
+
+def clean_sr_config(session):
+    srs = session.xenapi.SR.get_all()
+    for sr in srs:
+        oc = session.xenapi.SR.get_other_config(sr)
+        for key in oc:
+            if key.startswith("tvm_"):
+                vdi_uuid = key.replace("tvm_","")
+                args = {}
+                args['vdi_uuid'] = vdi_uuid
+                try:
+                    vm, _, vdi_uuid = find_exposing_vm(session, args)
+                    if not vm:
+                        remove_sr_config(session, vdi_uuid)
+                except VDINotFound:
+                    return
+
+def is_vhd_exposed(session, uuid):
+    vhd_str = "transfer_vhd_uuid_%s" % uuid
+    vmrecs = vms_with_records(session)
+    for (_, vmrec) in vmrecs.iteritems():
+        if vmrec['other_config'].get(vhd_str) and vmrec['power_state'] == "Running":
+            return vmrec['uuid']
+
+@log_exceptions
+def abort_sr_ops(session, args):
+    """An API call to make a call to abort SR operations like GC. Note, this call
+    must be made on the SR master host of the VDI/Tree being exposed as this is local
+    plugin call. If there is current no SR cleanup operation, it is effectively a NOP,
+    however if there is, it will be aborted and not restarted until the next SR scan.
+    """
+    sr_uuid = validate_exists(args, 'sr_uuid')
+    log.debug("Abort SR Ops call with session handle %s" % session.handle)
+    sr_cleanup.abort(sr_uuid)
+    return "OK"
+
+@log_exceptions
+def get_record(session, args):
+    """Returns the connection parameters of an exposed VDI, and a simple status for other VDIs.
+
+    For spec, see http://scale.ad.xensource.com/confluence/display/engp/XenAPI+transfer+plugin+API+Specification
+    """
+
+    vm, vmrec, vdi_uuid = find_exposing_vm(session, args)
+
+    retval = {}
+    if not vm:
+        #The vdi might been a vhd as part of the chain
+        vdi_uuid = validate_exists(args, 'vdi_uuid')
+        record = is_vhd_exposed(session, vdi_uuid)
+        if record:
+            new_args = {}
+            new_args['record_handle'] = record
+            return get_record(session, new_args)
+        else:
+            retval = {'vdi_uuid': vdi_uuid,
+                      'status': 'unused'}
+    else:
+        log.info('xapi transfer plugin get_record: Reading configuration about exposed VDI %r from VM %r' % (vdi_uuid, vmrec['uuid']))
+        # Read static configuration
+        config = read_vm_config(session, vm, vdi_uuid)
+        config['status'] = 'exposed'
+        config['record_handle'] = vmrec['uuid']
+        # Read dynamic configuration (IP, SSL certificate) from the xenstore
+        config['ip'] = blocking_read_ip_address(session, vm)
+        devices = config['all_devices'].split(',')
+        wait_config_ready(session, vm, devices)
+        if config['use_ssl'] == 'true':
+            ssl = True
+            config['ssl_cert'] = blocking_read_ssl_cert_config(session, vm, devices[-1]).replace('|','\n')
+        else:
+            ssl = False
+        # Add convenience fields
+        if config['transfer_mode'] in ['http', 'bits']:
+            def do_full_url(k, u):
+                config[k] = url_full(config['ip'], config['port'],
+                                     config['username'], config['password'],
+                                     ssl, u)
+            all_vdi_uuids = vdi_uuid.split(',')
+            if 'non_leaf_vdi_uuids' in config:
+                all_vdi_uuids += config['non_leaf_vdi_uuids'].split(',')
+            for vdi_u in all_vdi_uuids:
+                do_full_url('url_full_%s' % vdi_u, vdi_u)
+            do_full_url('url_full', all_vdi_uuids[0])
+
+        read_status(session, vm, devices, config)
+
+        retval = config
+
+    # The dict must be converted into a string, otherwise XenAPI.py on the client side cannot unmarshal it.
+    return to_xml(retval)
+
+
+def to_xml(d):
+    s = '<?xml version="1.0"?>\n<transfer_record'
+    for k, v in d.iteritems():
+        s += ' %s="%s"' % (k, xmlrpclib.escape(v))
+    s += '></transfer_record>\n'
+    return s
+
+
+@log_exceptions
+def get_graphviz(session, args):
+    """For debugging, a graphviz output of what's going on.
+    """
+
+    vm, vmrec, vdi_uuid = find_exposing_vm(session, args)
+
+    if not vm:
+        return "Unused: %s" % vdi_uuid
+
+    config = read_vm_config(session, vm, vdi_uuid)
+
+    vdi_uuids = config['vdi_uuid'].split(',')
+
+    result = 'digraph "%s" {\n' % vmrec['uuid']
+    for vdi_uuid in vdi_uuids:
+        result += '  "VDI %s" -> "%s";\n' % (vdi_uuid,
+                                             config['device_%s' % vdi_uuid])
+    result += '\n'
+
+    result += tree_to_string(config, config['vhd_root'])
+
+    result += "}\n"
+    return result
+
+def tree_to_string(config, node):
+    k = 'vhd_children_%s' % node
+    if k not in config:
+        return ""
+    children = config[k].split(',')
+    result = ""
+    for child in children:
+        result += '  "VDI %s" -> "VDI %s";\n' % (node, child)
+    result += '\n'
+    for child in children:
+        result += tree_to_string(config, child)
+    return result
+
+
+@log_exceptions
+def get_graphviz_forest(session, args):
+    """For debugging, a graphviz output of a forest of VMs and VDIs.
+    """
+
+    vm_uuids = validate_exists(args, 'vm_uuids')
+
+    all_vms = get_all_vms(session, vm_uuids)
+    leaf_vdis = get_vdis(session, all_vms)
+    forest = Forest.build(session, leaf_vdis, include_bitmaps = False)
+
+    result = 'digraph "%s" {\n' % vm_uuids
+    for vdi_ref in forest.all_vdis().iterkeys():
+        vdi_rec = forest.vdi_record(vdi_ref)
+        result += '  "VDI %s" -> "%s/%s (%s%%)";\n' % \
+                  (vdi_rec['uuid'],
+                   vdi_rec['physical_utilisation'],
+                   vdi_rec['virtual_size'],
+                   (100 * long(vdi_rec['physical_utilisation']) /
+                    long(vdi_rec['virtual_size'])))
+        for child_ref in forest.children(vdi_ref):
+            child_rec = forest.vdi_record(child_ref)
+            result += '  "VDI %s" -> "VDI %s";\n' % (vdi_rec['uuid'],
+                                                     child_rec['uuid'])
+        result += '\n'
+
+    result += "}\n"
+    return result
+
+
+@log_exceptions
+def get_bitmaps(session, args):
+    """
+    """
+    leaf_vdi_uuids = validate_exists(args, 'leaf_vdi_uuids').split(',')
+    log.debug('get_bitmaps(%s)', leaf_vdi_uuids)
+
+    leaf_vdi_refs = [session.xenapi.VDI.get_by_uuid(uuid)
+                     for uuid in leaf_vdi_uuids]
+    return vhd_bitmaps.make_bitmap_xml(
+        vhd_bitmaps.get_all_bitmaps(session, leaf_vdi_refs))
+
+def get_snapshots(session, all_vms):
+    """
+    Used to return a dictionary object listing all the VMs and their associated snapshots.
+    This can then be used to check no snapshoting has taken places whilst reading the
+    VHD's BATs.
+    """
+    result = {}
+    for vm in all_vms:
+        result[vm] = session.xenapi.VM.get_snapshots(vm)
+    return result
+    
+@log_exceptions
+def check_snapshot_tree_length(session, all_vms):
+    """
+    Checks that the snapshot tree length is not greater than 15 and returns an exception if
+    that is the case. This check ensures we can plug all of the vdis into the transfer vm.
+    """
+    for vm in all_vms:
+        snapshots = session.xenapi.VM.get_snapshots(vm)
+        if len(snapshots) > MAX_SNAPSHOT_LENGTH:
+            raise SnapshotTreeTooLong(session, "The VM you are attempting to export has %s snapshots which is greater than our %s snapshot limit" % (len(snapshots), MAX_SNAPSHOT_LENGTH))
+
+@log_exceptions
+def number_of_ip_addresses_needed(session, args):
+    """
+    Calculates the number of IP addresses required to expose a VM forest with static networking details.
+    """
+    vm_uuids = validate_exists(args, 'vm_uuids')
+    all_vms = get_all_vms(session, vm_uuids)
+
+    check_snapshot_tree_length(session, all_vms)
+    leaf_vdis = get_vdis(session, all_vms)
+    forest = Forest.build(session, leaf_vdis)
+    return str(len(forest.roots()))
+        
+def increment_ip_address(ipaddress, offset):
+    segment = re.compile("\d{1,3}")
+    segments = segment.findall(ipaddress)
+    return "%s.%s.%s.%s" % (segments[0], segments[1], segments[2], (int(segments[3]) + offset))
+
+def eject_all_cds(session, all_vms):
+    for vm in all_vms:
+        vbds = session.xenapi.VM.get_VBDs(vm)
+        for vbd in vbds:
+            vbd_type = session.xenapi.VBD.get_type(vbd)
+            if vbd_type == "CD":
+                if not session.xenapi.VBD.get_empty(vbd):
+                    session.xenapi.VBD.eject(vbd)
+
+@log_exceptions
+def expose_forest(session, args):
+    """
+    """
+    vm_uuids = validate_exists(args, 'vm_uuids')
+    all_vms = get_all_vms(session, vm_uuids)
+    eject_all_cds(session, all_vms)    
+
+    expose_args = {}
+    expose_args[GET_LOG] = validate_exists(args, GET_LOG, 'false')
+
+    expose_args['transfer_mode'] = 'bits'
+    parse_network_args(args, expose_args)
+
+    if expose_args['network_mode'] == 'manual':
+        raise ArgumentError('Invalid network_mode argument %s. For exposing a forest, "manual_range" is required' % expose_args['network_mode'])
+    parse_misc_expose_args(args, expose_args)
+
+    check_snapshot_tree_length(session, all_vms)
+
+    leaf_vdis = get_vdis(session, all_vms)
+
+    pre_snap_state = get_snapshots(session, all_vms)
+
+    forest = Forest.build(session, leaf_vdis)
+
+    post_snap_state = get_snapshots(session, all_vms)
+    
+    if pre_snap_state != post_snap_state:
+        raise VMChangedDuringExport("ERROR: The VM cannot be exported because it has been modified during the export process (e.g. a Snapshot has been taken). Please re-try exporting the modfied VM")
+    
+    num_tvms_required = len(forest.roots())
+
+    if expose_args['network_mode'] == 'manual_range':
+        validate_ip_range(expose_args['network_ip_start'], expose_args['network_ip_end'], num_tvms_required)
+
+    offset = 0
+
+    transfer_vm_uuids = []
+    for root in forest.roots():
+        if expose_args['network_mode'] == 'manual_range':
+            expose_args['network_ip'] = increment_ip_address(expose_args['network_ip_start'], offset)
+        transfer_vm_uuids.append(
+            expose_tree(session, expose_args, forest, leaf_vdis, root))
+        offset += 1
+    return ','.join(transfer_vm_uuids)
+
+
+def expose_tree(session, expose_args, forest, leaf_vdis, root_vdi_ref):
+    config = {}
+    config['leaf_vdis'] = []
+    config['non_leaf_vdis'] = []
+    compute_tree_config(forest, leaf_vdis, root_vdi_ref, config)
+
+    log.debug('Config for %s follows:', root_vdi_ref)
+    for k, v in config.iteritems():
+        log.debug('%s: %s', k, v)
+
+    vdi_uuids = {}
+    for vdi_ref in config['leaf_vdis'] + config['non_leaf_vdis']:
+        vdi_uuids[vdi_ref] = session.xenapi.VDI.get_uuid(vdi_ref)
+
+    expose_args['vdi_uuid'] = [vdi_uuids[vdi_ref] for
+                               vdi_ref in config['leaf_vdis']]
+
+    expose_args['extra_info'] = {}
+    expose_args['extra_info']['vhd_root'] = vdi_uuids[root_vdi_ref]
+    for vdi_ref in vdi_uuids.iterkeys():
+        children = forest.children(vdi_ref)
+        if children:
+            expose_args['extra_info']['vhd_children_%s' % vdi_uuids[vdi_ref]] = \
+                ','.join([vdi_uuids[child] for child in children])
+
+
+    def copy(k):
+        expose_args[k] = [config[vdi_ref].get(k, '')
+                          for vdi_ref in config['leaf_vdis']]
+    copy('vhd_blocks')
+    copy('vhd_uuid')
+    copy('vhd_puuid')
+    copy('vhd_ppath')
+
+
+    expose_args['non_leaf_config'] = {}
+    for vdi_ref in config['non_leaf_vdis']:
+        expose_args['non_leaf_config'][vdi_uuids[vdi_ref]] = {}
+        def copy2(k):
+            expose_args['non_leaf_config'][vdi_uuids[vdi_ref]][k] = \
+                config[vdi_ref][k]
+        copy2('vdi_size')
+        copy2('vhd_blocks')
+        copy2('vhd_block_map')
+        copy2('vhd_uuid')
+        if 'vhd_puuid' in config[vdi_ref]:
+            copy2('vhd_puuid')
+            copy2('vhd_ppath')
+
+    return expose_(session, expose_args)
+
+@log_exceptions
+def cleanup_import(session, args):
+    """This is a function to take an string of comma seperated disk UUIDs
+    and remove all the newly created VDIs ensuring that any remaining transferVMs 
+    are shutdown properly and removed.
+    """
+    disks = validate_exists(args, 'vdi_uuids').split(',')
+    for vdi_uuid in disks:        
+        unexpose_vdi_if_exposed(session, vdi_uuid)
+        vdi_ref = session.xenapi.VDI.get_by_uuid(vdi_uuid)
+        session.xenapi.VDI.destroy(vdi_ref)
+    return "OK"
+
+def unexpose_vdi_if_exposed(session, vdi_uuid):
+    args = {}
+    args['vdi_uuid'] = vdi_uuid
+    try:
+        unexpose(session, args)
+    except VDINotInUse:
+        log.debug("vdi_uuid %s is not exposed so continuing" % vdi_uuid)
+
+    
+
+def get_all_vms(session, vm_uuids):
+    result = {}
+    pending = []
+    uuids = vm_uuids.split(',')
+    for uuid in uuids:
+        vm_ref = ignore_failure(session.xenapi.VM.get_by_uuid, uuid)
+        if vm_ref:
+            pending.append(vm_ref)
+    get_all_vms_(session, result, pending)
+    return result
+
+
+def get_all_vms_(session, result, pending):
+    while True:
+        if not pending:
+            return
+        vm_ref = pending[0]
+        pending.remove(vm_ref)
+        if vm_ref not in result and vm_ref != 'OpaqueRef:NULL':
+            vm_rec = ignore_failure(session.xenapi.VM.get_record,
+                                    vm_ref)
+            if not vm_rec:
+                continue
+            
+            result[vm_ref] = vm_rec
+            pending.append(vm_rec['parent'])
+
+
+def get_vdis(session, vms):
+    result = {}
+    for vm_rec in vms.values():
+        vbds = vm_rec['VBDs']
+        for vbd_ref in vbds:
+            if session.xenapi.VBD.get_type(vbd_ref) == 'CD':
+                continue
+            vdi_ref = session.xenapi.VBD.get_VDI(vbd_ref)
+            vdi_rec = ignore_failure(session.xenapi.VDI.get_record, vdi_ref)
+            if vdi_rec:
+                result[vdi_ref] = vdi_rec
+        if vm_rec['suspend_VDI'] != 'OpaqueRef:NULL':
+            suspend_vdi_rec = \
+                ignore_failure(session.xenapi.VDI.get_record,
+                               vm_rec['suspend_VDI'])
+            if suspend_vdi_rec:
+                result[vm_rec['suspend_VDI']] = suspend_vdi_rec
+    return result
+
+
+def compute_tree_config(forest, leaf_vdis, this_vdi_ref, config):
+    def add_vdi_if_missing(k):
+        if this_vdi_ref not in config[k]:
+            config[k].append(this_vdi_ref)
+        
+    add_standard_config(forest, this_vdi_ref, config)
+    if this_vdi_ref in leaf_vdis:
+        add_vdi_if_missing('leaf_vdis')
+    else:
+        add_vdi_if_missing('non_leaf_vdis')
+        compute_tree_config_non_leaf(forest, leaf_vdis, this_vdi_ref, config)
+
+    children = forest.children(this_vdi_ref)
+    for child in children:
+        compute_tree_config(forest, leaf_vdis, child, config)
+
+def compute_tree_config_non_leaf(forest, leaf_vdis, vdi_ref, config):
+    config[vdi_ref]['vdi_size'] = forest.vdi_record(vdi_ref)['virtual_size']
+    config[vdi_ref]['vhd_block_map'] = \
+        remap_block_map(forest,
+            vhd_bitmaps.compute_block_map(forest, leaf_vdis, vdi_ref))
+
+def remap_block_map(forest, m):
+    result = {}
+    for k, v in m.iteritems():
+        result[forest.vdi_record(k)['uuid']] = v
+    return result
+
+def add_standard_config(forest, vdi_ref, config):
+    config[vdi_ref] = {}
+    config[vdi_ref]['vhd_uuid'] = forest.vdi_record(vdi_ref)['uuid']
+    config[vdi_ref]['vhd_blocks'] = forest.encoded_bitmap(vdi_ref)
+    parent = forest.parent(vdi_ref)
+    if parent is not None:
+        puuid = forest.vdi_record(parent)['uuid']
+        config[vdi_ref]['vhd_puuid'] = puuid
+        config[vdi_ref]['vhd_ppath'] = '%s.vhd' % puuid
+
+def hosts_that_can_see_sr(session, sr_ref):
+    """Returns a list of host references that can
+    see the specified SR"""
+
+    pbds = session.xenapi.SR.get_PBDs(sr_ref)
+    hosts = []
+    for pbd in pbds:
+        if session.xenapi.PBD.get_currently_attached(pbd):
+            hosts.append(session.xenapi.PBD.get_host(pbd))
+    return hosts
+
+@log_exceptions
+def remap_vm(session, args):
+    """Take a VM metadata VDI, import it, and remap the contained VDIs
+    as specified by the vdi_map parameter.
+    """
+
+    parsedargs = {}
+    parsedargs['vm_metadata_vdi_uuid'] = \
+        validate_exists(args, 'vm_metadata_vdi_uuid')
+    parsedargs['vdi_map'] = parse_vdi_map(exists(args, 'vdi_map'))
+    parsedargs['sr_uuid'] = validate_exists(args, 'sr_uuid')
+
+    #We need to check which SR we are dealing with - if this host cannot see the 
+    # Storage we must re-direct the call to that host.
+
+    this_host_uuid = get_from_xensource_inventory('INSTALLATION_UUID')
+    this_host_ref = session.xenapi.host.get_by_uuid(this_host_uuid)
+    sr_ref = session.xenapi.SR.get_by_uuid(parsedargs['sr_uuid'])
+    
+    host_list = hosts_that_can_see_sr(session, sr_ref)
+
+    if not this_host_ref in host_list:
+        if host_list:
+            return session.xenapi.host.call_plugin(host_list[0], 'transfer',
+                                            'remap_vm', args)
+        else:
+            raise XenAPI.Failure(["NO_HOSTS_CAN_SEE_SR", 
+                                  "There are no hosts which can see SR %s" % sr_ref])
+
+    debug_output = optional(args, 'debug_output')
+
+    metadata_vdi = \
+        session.xenapi.VDI.get_by_uuid(parsedargs['vm_metadata_vdi_uuid'])
+
+    new_vm_metadata = \
+        with_vdi_in_dom0(session, metadata_vdi, True,
+                         lambda src_dev: make_new_metadata(parsedargs,
+                                                           src_dev))
+
+    if debug_output:
+        f = file(debug_output, 'w')
+        try:
+            f.write(new_vm_metadata)
+        finally:
+            f.close()
+        return "Written to %s" % debug_output
+    else:
+        log.debug('Importing new metadata...')
+        new_vm_ref = vm_metadata.import_vm_metadata('http', 'localhost', 80,
+                                                    session, new_vm_metadata)
+        log.debug('Importing new metadata done.  VM is %s.', new_vm_ref)
+
+        log.debug('Deleting metadata VDI...')
+        session.xenapi.VDI.destroy(metadata_vdi)
+        log.debug('Deleting metadata VDI done.')
+
+        return session.xenapi.VM.get_uuid(new_vm_ref)
+
+
+def make_new_metadata(parsedargs, src_dev):
+    f = file('/dev/%s' % src_dev)
+    try:
+        return vm_metadata.make_new_vm_metadata(f,
+                                                parsedargs['vdi_map'],
+                                                parsedargs['sr_uuid'])
+    finally:
+        f.close()
+
+
+def parse_vdi_map(vdi_map_str):
+    if vdi_map_str == '':
+        return {}
+    bits = vdi_map_str.split(',')
+    result = {}
+    for bit in bits:
+        vdis = bit.split('=')
+        if len(vdis) != 2:
+            raise ArgumentError('Invalid vdi_map entry %s' % bit)
+        result[vdis[0]] = vdis[1]
+    return result
+
+def prepare_network(session, network):
+    """A method to take a network record (as parsed from VM-Metadata), 
+    check if that network exists for the import session, and if it
+    doesn't, then creates a dummy network using the information
+    passed inside the network object.
+    """
+    existing_network = session.xenapi.network.get_by_name_label(network['name_label'])
+    if len(existing_network) == 0:
+        #Create a network since metadata refers to it by it's name-label
+        new_network = session.xenapi.network.create(network)
+        network_uuid = session.xenapi.network.get_uuid(new_network)
+        log.debug("New dummy network created: %s" % network_uuid)
+
+def prepare_networks(session, xml):
+    #Parse XML for networks in existence - so if not present, can be recreated
+    networks = vm_metadata.get_networks(xml)
+    if len(networks) > 0:
+        for network in networks:
+            prepare_network(session, network)
+
+@log_exceptions    
+def get_import_instructions(session, args):
+    """Take a VM metadata VDI, and print a list of instructions to tell a
+    client how to import the required VDIs, bearing in mind all the
+    complexity of managing snapshots.
+    """
+    parsedargs = {}
+    parsedargs['vm_metadata_vdi_uuid'] = \
+        validate_exists(args, 'vm_metadata_vdi_uuid')
+
+    metadata_vdi = \
+        session.xenapi.VDI.get_by_uuid(parsedargs['vm_metadata_vdi_uuid'])
+
+    sr_ref = session.xenapi.VDI.get_SR(metadata_vdi)
+    #Check that we are the SR master for this SR
+    sr_master = get_sr_master(session, sr_ref)
+    this_host = get_this_host(session)
+    log.debug("Comparing sr_master %s with this_host %s" % (sr_master, this_host))
+    if sr_master != this_host:
+        log.debug("Making a plugin call")
+        return session.xenapi.host.call_plugin(sr_master, "transfer", "get_import_instructions", args)
+    return _get_import_instructions(session, metadata_vdi)
+    
+
+@log_exceptions
+def _get_import_instructions(session, metadata_vdi):
+    xml = with_vdi_in_dom0(session, metadata_vdi, True, parse_ova_xml)
+    try:
+        prepare_networks(session, xml)
+        vdis = vm_metadata.get_vdis(xml)
+        ordered_vdis = []
+        children = {}
+        roots = [k for (k, (p, _, _)) in vdis.iteritems() if p is None]
+
+        def find_tree(v):
+            ordered_vdis.append(v)
+            for (child, (parent, _, _)) in vdis.iteritems():
+                if parent == v:
+                    if v not in children:
+                        children[v] = []
+                    children[v].append(child)
+                    find_tree(child)
+
+        for root in roots:
+            find_tree(root)
+
+        return '\n'.join(generate_instructions(vdis, ordered_vdis, children))
+    finally:
+        xml.unlink()
+
+
+def parse_ova_xml(dev):
+    f = file('/dev/%s' % dev, 'r')
+    try:
+        return vm_metadata.parse_ova_xml(f)
+    finally:
+        f.close()
+
+
+def generate_instructions(vdis, ordered_vdis, children):
+    result = []
+    for v in ordered_vdis:
+        parent, virtual_size, is_a_snapshot = vdis[v]
+        if virtual_size % 512 != 0:
+            virtual_size = ((virtual_size + 511) >> 9) << 9
+            log.info('Rounded VDI %s up to %d' % (v, virtual_size))
+        if parent is None:
+            result.append("create %s %s" % (v, virtual_size))
+        elif children[parent][-1] == v:
+            result.append("reuse %s %s" % (v, parent))
+        else:
+            result.append("clone %s %s" % (v, parent))
+
+        if v in children:
+            result.append("pass")
+        else:
+            if is_a_snapshot:
+                result.append("snap %s" % v)
+            else:
+                result.append("leaf %s" % v)
+    return result
+
+def run_bash_script(name):
+    process = subprocess.Popen([name],
+                               stdout=subprocess.PIPE,
+                               cwd='/')
+    _ , stderr = process.communicate()
+    if process.returncode == 0:
+        return True
+    else:
+        raise XenAPI.Failure(["FAILURE_TO_RUN_SCRIPT", name + " " + stderr])
+
+def remove_file(fn):
+    if os.path.isfile(fn):
+        try:
+            os.remove(fn)
+            return True
+        except XenAPI.Failure:
+            raise XenAPI.Failure(["ERROR_REMOVING_FILE", "An error occured whilst trying to remove %s" % fn])
+    else:
+        return False
+
+def install_transfer_vm_template():
+    #Call Uninstall Script
+    run_bash_script(TRANSFER_VM_UNINSTALL)
+    #Call Install Script
+    run_bash_script(TRANSFER_VM_INSTALL)
+    remove_file(RPM_STATE_PATH)
+
+def get_local_transfer_vm_template(session, this_host):
+    transfer_templates = [vm[0] for vm
+                          in templates_with_records(session).iteritems()
+                          if transfer_vm_template(vm[1])]
+
+    template, _ = find_local_template(session, transfer_templates, this_host)
+    return template
+
+def prepare_transfervm_template(session, args):
+    logging.debug(args) #Work around for pylint checking
+    host_uuid = get_from_xensource_inventory('INSTALLATION_UUID')
+    if host_uuid is None:
+        raise XenAPI.Failure(['HOST_UUID_READ_ERROR', \
+                         'Error reading the XenServer host uuid'])
+    else:
+        this_host = session.xenapi.host.get_by_uuid(host_uuid)
+
+    template = get_local_transfer_vm_template(session, this_host)
+
+    if ( (has_rpm_state_changed() != True) and (template is not None)):
+        return template
+    else:
+        install_transfer_vm_template()
+        new_template = get_local_transfer_vm_template(session, this_host)
+        if new_template is not None:
+            return new_template
+        else:
+            raise XenAPI.Failure(["NO_TEMPLATE", "There has been an error installing the Transfer VM template"])
+       
+
+if __name__ == '__main__':
+    XenAPIPlugin.dispatch({'expose': expose,
+                           'expose_forest': expose_forest,
+                           'cleanup_import': cleanup_import,
+                           'unexpose': unexpose,
+                           'cleanup': cleanup,
+                           'cleanup_force': cleanup_force,
+                           'abort_sr_ops': abort_sr_ops,
+                           'get_record': get_record,
+                           'get_bitmaps': get_bitmaps,
+                           'get_graphviz': get_graphviz,
+                           'get_graphviz_forest': get_graphviz_forest,
+                           'remap_vm': remap_vm,
+			   'save_logs': save_logs,
+                           'get_import_instructions': get_import_instructions,
+                           'prepare_transfervm_template': prepare_transfervm_template,
+                           'number_of_ip_addresses_needed': number_of_ip_addresses_needed,
+                           })

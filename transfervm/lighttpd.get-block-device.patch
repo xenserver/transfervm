@@ -1,0 +1,66 @@
+--- src/stat_cache.c	2010-03-13 20:02:08.000000000 +0000
++++ src/stat_cache.c	2009-10-13 17:50:27.000000000 +0100
+@@ -369,6 +369,7 @@
+ 	struct stat st;
+ 	size_t k;
+ 	int fd;
++	off_t seekpos;
+ 	struct stat lst;
+ #ifdef DEBUG_STAT_CACHE
+ 	size_t i;
+@@ -488,11 +489,28 @@
+ 	}
+ 
+ 
+-	if (S_ISREG(st.st_mode)) {
++	if (S_ISREG(st.st_mode) || S_ISBLK(st.st_mode)) {
+ 		/* try to open the file to check if we can read it */
+-		if (-1 == (fd = open(name->ptr, O_RDONLY))) {
++                fd = open(name->ptr, O_RDONLY);
++		if (-1 == fd) {
+ 			return HANDLER_ERROR;
+ 		}
++
++		/* Block devices do not return their size with stat().
++		 * Must seek to the end and read the current position to get the size.
++		 * */
++                if (S_ISBLK(st.st_mode)) {
++			seekpos = lseek(fd, 0, SEEK_END);
++			if (-1 == seekpos) {
++				log_error_write(srv, __FILE__, __LINE__,
++						"sb", "Cannot seek in block device", name);
++				close(fd);
++				return HANDLER_ERROR;
++			}
++
++			st.st_size = seekpos;
++		}
++
+ 		close(fd);
+ 	}
+ 
+--- src/mod_staticfile.c	2010-03-13 20:02:08.000000000 +0000
++++ src/mod_staticfile.c	2009-10-13 17:50:27.000000000 +0100
+@@ -405,6 +405,7 @@
+ 	}
+ 
+ 	/* we only handline regular files */
++        /* And block devices! */
+ #ifdef HAVE_LSTAT
+ 	if ((sce->is_symlink == 1) && !con->conf.follow_symlink) {
+ 		con->http_status = 403;
+@@ -418,12 +419,12 @@
+ 		return HANDLER_FINISHED;
+ 	}
+ #endif
+-	if (!S_ISREG(sce->st.st_mode)) {
++	if (!S_ISREG(sce->st.st_mode) && !S_ISBLK(sce->st.st_mode)) {
+ 		con->http_status = 404;
+ 
+ 		if (con->conf.log_file_not_found) {
+ 			log_error_write(srv, __FILE__, __LINE__, "sbsb",
+-					"not a regular file:", con->uri.path,
++					"not a regular file nor block device:", con->uri.path,
+ 					"->", sce->name);
+ 		}
+ 

@@ -1,0 +1,46 @@
+Summary: XenServer Transfer VM
+Name: xenserver-transfer-vm
+Version: @PRODUCT_VERSION@
+Release: @BUILD_NUMBER@
+License: Proprietary
+Vendor: Citrix Systems, Inc.
+Group: Development/Libraries
+BuildRoot: %{_tmppath}/%{name}
+BuildArch: noarch
+
+%description
+
+%prep
+exit 0
+
+%build
+exit 0
+
+%install
+exit 0
+
+%clean
+exit 0
+
+%files
+%defattr(-,root,root,-)
+/opt/xensource/packages/files/transfer-vm/ISCSISR.py.md5
+/opt/xensource/packages/files/transfer-vm/ISCSISR.py.patch
+/opt/xensource/packages/files/transfer-vm/do-copy
+/opt/xensource/packages/files/transfer-vm/do-transfer
+/opt/xensource/packages/files/transfer-vm/install-transfer-vm.sh
+/opt/xensource/packages/files/transfer-vm/transfer-vm.xva
+/opt/xensource/packages/files/transfer-vm/uninstall-transfer-vm.sh
+/etc/xapi.d/plugins/copy
+/etc/xapi.d/plugins/forest.py
+/etc/xapi.d/plugins/pluginlib.py
+/etc/xapi.d/plugins/transfer
+/etc/xapi.d/plugins/vhd.py
+/etc/xapi.d/plugins/vhd_bitmaps.py
+/etc/xapi.d/plugins/vm_metadata.py
+
+%posttrans
+touch /opt/xensource/packages/files/transfer-vm/rpm_change
+
+%preun
+exit 0

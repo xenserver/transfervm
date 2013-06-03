@@ -1,0 +1,24 @@
+#!/bin/sh
+
+set -x
+
+echo -n "Stopping lighttpd... "
+
+/usr/bin/killall lighttpd
+
+echo "done."
+
+echo -n "Stopping iSCSI target daemon... "
+
+tids=$(/usr/sbin/tgtadm --op show --lld iscsi --mode target | sed -ne 's/^Target \([0-9]*\):.*$/\1/p')
+
+for tid in $tids
+do
+  /usr/sbin/tgtadm --lld iscsi --op delete --mode target --tid $tid
+done
+
+/usr/bin/killall tgtd
+
+echo "done."
+
+exit 0

@@ -1,0 +1,30 @@
+--- src/base.h	2010-03-13 20:02:08.000000000 +0000
++++ src/base.h	2010-03-16 10:23:29.000000000 +0000
+@@ -489,6 +490,8 @@
+ 	unsigned short log_request_header_on_error;
+ 	unsigned short log_state_handling;
+ 
++	unsigned short log_blockio;
++
+ 	enum { STAT_CACHE_ENGINE_UNSET,
+ 			STAT_CACHE_ENGINE_NONE,
+ 			STAT_CACHE_ENGINE_SIMPLE,
+--- src/configfile.c	2010-03-13 20:02:08.000000000 +0000
++++ src/configfile.c	2009-10-13 17:50:27.000000000 +0100
+@@ -94,7 +94,8 @@
+ 		{ "etag.use-inode",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 49 */
+ 		{ "etag.use-mtime",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 50 */
+ 		{ "etag.use-size",             NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 51 */
+ 		{ "server.default-errorpages",   NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 52 */
++ 		{ "debug.log-blockio",           NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER }, /* 53 */
+ 		{ "server.host",                 "use server.bind instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+ 		{ "server.docroot",              "use server.document-root instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+ 		{ "server.virtual-root",         "load mod_simple_vhost and use simple-vhost.server-root instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
+@@ -124,6 +126,7 @@
+ 	cv[23].destination = &(srv->srvconf.max_fds);
+ 	cv[37].destination = &(srv->srvconf.log_request_header_on_error);
+ 	cv[38].destination = &(srv->srvconf.log_state_handling);
++	cv[53].destination = &(srv->srvconf.log_blockio);
+ 
+ 	cv[40].destination = &(srv->srvconf.errorlog_use_syslog);
+ 
