@@ -28,7 +28,7 @@ UCLIBC_TOOLCHAIN_PATH ?= /tmp/transfervm-obj/buildroot-2009.02/build_i686/stagin
 UCLIBC_TOOL_PREFIX ?= i686-linux-uclibc-
 
 REPONAME := transfervm
-REPO := $(call hg_loc,$(REPONAME))
+REPO := $(call git_loc,$(REPONAME))
 
 BLKTAP_REPONAME := blktap
 BLKTAP_HG := $(call git_loc,$(BLKTAP_REPONAME))

@@ -16,7 +16,7 @@ BUILD := $(BUILD_NUMBER)
 
 REPONAME := transfervm
 ifdef B_BASE
-REPO := $(call hg_loc,$(REPONAME))
+REPO := $(call git_loc,$(REPONAME))
 else
 REPO := .
 endif
