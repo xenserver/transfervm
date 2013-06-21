@@ -5,8 +5,8 @@ Please try to follow the guidelines below.  They will make things
 easier on the maintainers. Not all of these guidelines matter for every
 trivial patch so apply some common sense.
 
-If you are unsure about something written here, ask on the mailing list
-xs-devel@lists.xenserver.org
+If you are unsure about something written here, please raise an issue on
+this GitHub project.
 
 0.    Before starting a big project, discuss it on the list first :-)
 
