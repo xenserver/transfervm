@@ -115,6 +115,7 @@ $(VM_TEMPLATE): $(MY_OBJ_DIR)/ova.xml $(KERNEL) $(INITRD) menu.lst
 	cp $(KERNEL) $(INITRD) $(MY_OBJ_DIR)/image-staging/boot/
 	cp menu.lst $(MY_OBJ_DIR)/image-staging/boot/grub/
 	$(FAKEROOT) chown -R root:root $(MY_OBJ_DIR)/image-staging
+	test -r /etc/mtab || ln -sf /proc/mounts /etc/mtab
 	sh ./mkxva $(MY_OBJ_DIR)/image-staging $(MY_OBJ_DIR)/ova.xml $(MY_OBJ_DIR) $@
 
 $(MY_OBJ_DIR)/ova.xml: ova.xml.in

@@ -1,11 +1,12 @@
 --- package/stunnel/stunnel.mk	2012-07-12 06:24:25.691785190 -0400
 +++ package/stunnel/stunnel.mk	2012-07-12 06:25:08.275784822 -0400
-@@ -22,7 +22,8 @@
+@@ -22,7 +22,9 @@
  	touch $(STUNNEL_DIR)/.unpacked
  
  $(STUNNEL_DIR)/.configured: $(STUNNEL_DIR)/.unpacked
 -	(cd $(STUNNEL_DIR); rm -rf config.cache; \
-+	(cd $(STUNNEL_DIR) && rm -rf config.cache && autoreconf -i)
++	(cd $(STUNNEL_DIR) && perl -pi.orig -e 's/\[AC_MSG_RESULT\(\[no\]\), LIBS="\$$saved_LIBS"\]/[AC_MSG_RESULT([no]); LIBS="\$$saved_LIBS"]/' configure.ac)
++	(cd $(STUNNEL_DIR) && rm -rf config.cache && autoreconf -if)
 +	(cd $(STUNNEL_DIR) && \
  		$(TARGET_CONFIGURE_OPTS) \
  		$(TARGET_CONFIGURE_ARGS) \
