@@ -7,6 +7,7 @@ Vendor: Citrix Systems, Inc.
 Group: Development/Libraries
 BuildRoot: %{_tmppath}/%{name}
 BuildArch: noarch
+Source0: transfer-vm.tar.gz
 
 %description
 
@@ -17,7 +18,8 @@ exit 0
 exit 0
 
 %install
-exit 0
+cd %{buildroot}
+tar zxvf %{SOURCE0}
 
 %clean
 exit 0
@@ -32,12 +34,12 @@ exit 0
 /opt/xensource/packages/files/transfer-vm/transfer-vm.xva
 /opt/xensource/packages/files/transfer-vm/uninstall-transfer-vm.sh
 /etc/xapi.d/plugins/copy
-/etc/xapi.d/plugins/forest.py
-/etc/xapi.d/plugins/pluginlib.py
+/etc/xapi.d/plugins/forest.py*
+/etc/xapi.d/plugins/pluginlib.py*
 /etc/xapi.d/plugins/transfer
-/etc/xapi.d/plugins/vhd.py
-/etc/xapi.d/plugins/vhd_bitmaps.py
-/etc/xapi.d/plugins/vm_metadata.py
+/etc/xapi.d/plugins/vhd.py*
+/etc/xapi.d/plugins/vhd_bitmaps.py*
+/etc/xapi.d/plugins/vm_metadata.py*
 
 %posttrans
 touch /opt/xensource/packages/files/transfer-vm/rpm_change

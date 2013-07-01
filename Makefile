@@ -69,7 +69,7 @@ $(SUPP_PACK_ISO): $(TRANSFER_RPM)
 	mv -f $(SUPP_PACK_DIR)/$(notdir $@) $@
 	mkisofs -A "Citrix" -V "Transfer VM Source ISO" -J -joliet-long -r -o $(MY_OUTPUT_DIR)/xenserver-transfer-vm-source.iso $(TRANSFER_VM_SRC)
 
-$(TRANSFER_RPM): $(TRANSFER_SPEC) $(TRANSFER_VM) pylint
+$(TRANSFER_RPM): $(TRANSFER_SPEC) $(TRANSFER_VM) $(RPM_SOURCESDIR)/.dirstamp pylint
 	mkdir -p $(dir $@)
 	mkdir -p $(TRANSFER_RPM_TMP_DIR)/$(TRANSFER_VM_DEST)
 	mkdir -p $(TRANSFER_RPM_TMP_DIR)/$(PLUGIN_DEST)
@@ -80,6 +80,7 @@ $(TRANSFER_RPM): $(TRANSFER_SPEC) $(TRANSFER_VM) pylint
 	cp $(ALL_WRAPPERS) $(TRANSFER_RPM_TMP_DIR)/$(TRANSFER_VM_DEST)
 	chmod a+x $(TRANSFER_RPM_TMP_DIR)/$(TRANSFER_VM_DEST)/*.sh \
 	          $(TRANSFER_RPM_TMP_DIR)/$(PLUGIN_DEST)/*
+	cd $(TRANSFER_RPM_TMP_DIR) && tar zcvf $(RPM_SOURCESDIR)/transfer-vm.tar.gz *
 	$(RPMBUILD) -bb $<
 
 $(TESTS_TARBALL): $(wildcard transfertests/*.py)
