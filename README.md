@@ -12,8 +12,8 @@ The currently supported transport protocols are:
 Usage
 -----
 
-A client makes a request to the XenServer host using a XAPI plguin 'transfer'
-whcih is installed along with the Transfer VM VPX image. Once the plugin has
+A client makes a request to the XenServer host using a XAPI plugin 'transfer'
+which is installed along with the Transfer VM VPX image. Once the plugin has
 been called to expose a disk, a record can be returned by the client which
 contains a URL over which the Trnsfer VM can be contacted to either
 upload/download a disk image.
