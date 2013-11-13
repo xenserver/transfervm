@@ -28,6 +28,14 @@ template_uuids=$(xe template-list --minimal other-config:transfervm=true)
 
 for template in $template_uuids; do
    vbd=$(xe vbd-list --minimal vm-uuid=$template)
+
+   # Remove detached templates
+   if [ -z $vbd ]
+   then
+       xe template-uninstall template-uuid=$template force=true
+       continue
+   fi
+
    echo "VBD = $vbd"
    vdi=$(xe vbd-param-get uuid=$vbd param-name=vdi-uuid)
    echo "VDI = $vdi"

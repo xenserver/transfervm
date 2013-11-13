@@ -1776,6 +1776,15 @@ def get_local_transfer_vm_template(session, this_host):
     template, _ = find_local_template(session, transfer_templates, this_host)
     return template
 
+def _get_vm_vbds(session, template):
+    vbd_recs = session.xenapi.VBD.get_all_records()
+    refs = []
+    for vbd_ref, vbd_rec in vbd_recs.iteritems():
+        # Check if the VBD belongs to the VM in question
+        if vbd_rec['VM'] == template:
+            refs.append(vbd_ref)
+    return refs
+
 def prepare_transfervm_template(session, args):
     logging.debug(args) #Work around for pylint checking
     host_uuid = get_from_xensource_inventory('INSTALLATION_UUID')
@@ -1787,7 +1796,10 @@ def prepare_transfervm_template(session, args):
 
     template = get_local_transfer_vm_template(session, this_host)
 
-    if ( (has_rpm_state_changed() != True) and (template is not None)):
+    # Make sure the templates disks have not been removed
+    vbds = _get_vm_vbds(session, template)
+
+    if ( (has_rpm_state_changed() != True) and (template is not None) and vbds):
         return template
     else:
         install_transfer_vm_template()
