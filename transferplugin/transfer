@@ -882,6 +882,7 @@ def expose_(session, parsedargs):
                               parsedargs['vdi_uuid'][0],
                               parsedargs['target_host_uuid'])
     vm = clone_utility_vm(session, template_ref, parsedargs['vdi_uuid'])
+    failure = None
     try:
         configure_network(session, vm, parsedargs['network_uuid'], parsedargs['network_mac'])
         vbds = attach_vdis(session, vm, parsedargs['vdi_uuid'], parsedargs['read_only'])
@@ -891,9 +892,17 @@ def expose_(session, parsedargs):
         # wait until it has booted up and has joined the network
         blocking_read_ip_address(session, vm)
         wait_config_ready(session, vm, devices)
-    finally:
-        session.xenapi.VM.add_to_other_config(vm, UTILITY_VM_EXPOSEDONE, 'true')
-        session.xenapi.VM.add_to_other_config(vm, GET_LOG, parsedargs[GET_LOG])
+    except Exception, e:
+        # Py2.4 can't use except and finally. 
+        failure = e
+
+    session.xenapi.VM.add_to_other_config(vm, UTILITY_VM_EXPOSEDONE, 'true')
+    session.xenapi.VM.add_to_other_config(vm, GET_LOG, parsedargs[GET_LOG])
+
+    if failure:
+        cleanup_force(session, {})
+        raise failure
+
     log.info('xapi transfer plugin expose: exposed VDI %r using VM %r.', parsedargs['vdi_uuid'], vm_uuid)
     return vm_uuid
 

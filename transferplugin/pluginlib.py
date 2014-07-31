@@ -394,16 +394,16 @@ def get_sr_master(session, sr_ref):
     pbds = session.xenapi.SR.get_PBDs(sr_ref)
 
     if len(pbds) == 1:
-        logging.debug("SR is Local Storage - Getting Master")
+        log.debug("SR is Local Storage - Getting Master")
         host = session.xenapi.PBD.get_host(pbds[0])
-        logging.debug("SR Master is %s" % host)
+        log.debug("SR Master is %s" % host)
         return host
     else:
-        logging.debug("SR is shared storage - getting pool master")
+        log.debug("SR is shared storage - getting pool master")
         pools = session.xenapi.pool.get_all()
         assert(len(pools) == 1)
         pool_master = session.xenapi.pool.get_master(pools[0])
-        logging.debug("SR Master is %s" % pool_master)
+        log.debug("SR Master is %s" % pool_master)
         return pool_master
 
 def get_sr_ref(session, vdi_uuid):
