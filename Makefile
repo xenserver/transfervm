@@ -57,7 +57,7 @@ TRANSFER_RPM_LINK := $(MY_OUTPUT_DIR)/xenserver-transfer-vm.noarch.rpm
 OUTPUT := $(SUPP_PACK_ISO) $(TRANSFER_RPM_LINK) $(TESTS_TARBALL)
 
 .PHONY: build
-build: $(OUTPUT)
+build: validate $(OUTPUT)
 	@:
 
 $(TRANSFER_RPM_LINK):
@@ -93,7 +93,12 @@ $(MY_OBJ_DIR)/%.spec: supp-pack/%.spec.in
 pylint:
 	$(PYLINT) $(ALL_PLUGINS)
 
+validate:
+	if [ "$(MY_OBJ_DIR)" = "" ]; then \
+		echo "Cannot find imported build variables. The Transfer VM can only be built with build.hg right now."; \
+		exit 1;\
+	fi
 
-clean:
-	rm -rf $(MY_OBJ_DIR)/*
+clean: validate
+	rm -rf $(MY_OBJ_DIR)
 	rm -f $(OUTPUT)
