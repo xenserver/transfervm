@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 #
-# Transfer VM - VPX for exposing VDIs on XenServer 
+# Transfer VM - VPX for exposing VDIs on XenServer
 # Copyright (C) Citrix Systems, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
@@ -230,7 +230,7 @@ def execute_instructions(local_session, local_sr_uuid, instructions,
         else:
             raise InvalidInstructions(
                 "Invalid instruction '%s'" % instruction)
-        
+
 
 def execute_create(local_session, local_sr_uuid, expose_records, instruction,
                    vdi_map):
@@ -252,7 +252,7 @@ def execute_clone(local_session, expose_records, instruction, vdi_map):
 
     dest_uuid = vdi_map[parent_uuid]
     dest_ref = local_session.xenapi.VDI.get_by_uuid(dest_uuid)
-    
+
     log.debug('Cloning %s for %s...', parent_uuid, child_uuid)
     new_dest_ref = local_session.xenapi.VDI.clone(dest_ref)
     new_dest_uuid = local_session.xenapi.VDI.get_uuid(new_dest_ref)
@@ -351,7 +351,7 @@ def expose_puller(session, vdi_uuid, src_url, src_cert):
     expose_args['src_urls'] = src_url
     if src_cert:
         expose_args['src_certs'] = src_cert
-    
+
     log.debug("Exposing pull from %s for VDI %s...", src_url, vdi_uuid)
     result = \
         unwrap_plugin_exceptions(
@@ -488,7 +488,7 @@ def pull_metadata(protocol, remote_host, remote_port,
         ('%s://x:x@%s:%s/export_metadata?session_id=%s&include_vhd_parents=true&ref=%s' %
          (protocol, remote_host, remote_port, remote_session.handle, vm_ref))
 
-    log.debug('Pulling metadata from %s...' % url)
+    log.debug('Pulling metadata from %s...', url)
 
     if protocol == 'https':
         remote_host_ref = get_this_host(remote_session)
@@ -713,7 +713,7 @@ def expose(session, vdi_uuid, read_only, extra_args):
     """
 
     log.debug("Exposing VDI %s, read_only=%s ... ", vdi_uuid, read_only)
-    
+
     host_ref = get_this_host(session)
 
     expose_args = extra_args
@@ -760,7 +760,7 @@ def unexpose(session, record_handle):
     """
     Nothrow guarantee.
     """
-    
+
     try:
         log.debug("Unexposing %s ... ", record_handle)
 

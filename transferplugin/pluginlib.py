@@ -1,6 +1,6 @@
-# Transfer VM - VPX for exposing VDIs on XenServer 
+# Transfer VM - VPX for exposing VDIs on XenServer
 # Copyright (C) Citrix Systems, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
@@ -152,10 +152,10 @@ def validate_exists(args, key, default=None):
         raise ArgumentError('Argument %s is required.' % key)
 
 def validate_ip_(ip_address, max_digit):
-    valid_ip = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    valid_ip = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
     if not valid_ip.match(ip_address):
         raise InvalidIPError("The supplied IP address: %s is invalid" % ip_address)
-    segment = re.compile("\d{1,3}")
+    segment = re.compile(r"\d{1,3}")
     segments = segment.findall(ip_address)
 
     for x in segments:
@@ -164,12 +164,12 @@ def validate_ip_(ip_address, max_digit):
 
 def validate_ip(ip_address):
     validate_ip_(ip_address, 254)
-    last_segment = re.compile("\d{1,3}$")
-    first_segment = re.compile("^\d{1,3}")
+    last_segment = re.compile(r"\d{1,3}$")
+    first_segment = re.compile(r"^\d{1,3}")
     x = int(first_segment.search(ip_address).group(0))
     y = int(last_segment.search(ip_address).group(0))
     if (x == 0 or y == 0):
-        raise InvalidIPError("The supplied IP address: %s is invalid" % ip_address) 
+        raise InvalidIPError("The supplied IP address: %s is invalid" % ip_address)
 
 def validate_netmask(netmask):
     validate_ip_(netmask, 255)
@@ -178,7 +178,7 @@ def validate_ip_range(start, end, length_required):
     validate_ip(start)
     validate_ip(end)
 
-    last_segment = re.compile("\d{1,3}$")
+    last_segment = re.compile(r"\d{1,3}$")
     x = int((last_segment.search(start)).group(0))
     y = int((last_segment.search(end)).group(0))
 
@@ -396,14 +396,14 @@ def get_sr_master(session, sr_ref):
     if len(pbds) == 1:
         log.debug("SR is Local Storage - Getting Master")
         host = session.xenapi.PBD.get_host(pbds[0])
-        log.debug("SR Master is %s" % host)
+        log.debug("SR Master is %s", host)
         return host
     else:
         log.debug("SR is shared storage - getting pool master")
         pools = session.xenapi.pool.get_all()
         assert(len(pools) == 1)
         pool_master = session.xenapi.pool.get_master(pools[0])
-        log.debug("SR Master is %s" % pool_master)
+        log.debug("SR Master is %s", pool_master)
         return pool_master
 
 def get_sr_ref(session, vdi_uuid):
@@ -419,7 +419,7 @@ def write_sr_config(session, vdi_uuid):
     log.debug("Writing SR Config..%s", vdi_uuid)
     key = "tvm_%s" % (vdi_uuid)
     sr = get_sr_ref(session, vdi_uuid)
-    log.debug("Adding key value pair %s=%s for SR %s" % (key, vdi_uuid, sr))
+    log.debug("Adding key value pair %s=%s for SR %s", key, vdi_uuid, sr)
     session.xenapi.SR.add_to_other_config(sr, key, 'true')
     host_sr_master = get_sr_master(session, sr)
     args = {}

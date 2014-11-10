@@ -63,9 +63,9 @@ disable=W0141,W0142,W0401,W0403,W0511,W0603,W0614,W0611,W0702,W0703,W0704,C0111,
 
 [REPORTS]
 
-# set the output format. Available formats are text, parseable, colorized and
-# html
-output-format=parseable
+# Set the output format. This is equivalent to the old, deprecated parseable
+# format.
+msg-template={path}:{line}: [{msg_id}({symbol}), {obj}] {msg}
 
 # Include message's id in output
 include-ids=yes
