@@ -1,6 +1,6 @@
-# Transfer VM - VPX for exposing VDIs on XenServer 
+# Transfer VM - VPX for exposing VDIs on XenServer
 # Copyright (C) Citrix Systems, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
@@ -49,7 +49,7 @@ def get_merged_bitmap(session, leaf_vdi_ref):
 
         final_bitmap = None
         for _, (vdi_uuid, bitmap) in result.iteritems():
-            log.debug("get_merged_bitmap vdi_uuid=%s bitmap=%s" % (vdi_uuid, bitmap))
+            log.debug("get_merged_bitmap vdi_uuid=%s bitmap=%s", vdi_uuid, bitmap)
             if not final_bitmap:
                 final_bitmap = bitmap
             else:

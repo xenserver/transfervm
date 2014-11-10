@@ -1,6 +1,6 @@
-# Transfer VM - VPX for exposing VDIs on XenServer 
+# Transfer VM - VPX for exposing VDIs on XenServer
 # Copyright (C) Citrix Systems, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
@@ -180,7 +180,7 @@ def replace_uuid(snap, uuid):
 
 def get_networks(ova_xml):
     result = []
-    
+
     def get_networks_(snap):
         arr = {}
         arr['uuid'] = get_value_from(snap, 'uuid').wholeText

@@ -1,6 +1,6 @@
-# Transfer VM - VPX for exposing VDIs on XenServer 
+# Transfer VM - VPX for exposing VDIs on XenServer
 # Copyright (C) Citrix Systems, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
@@ -25,7 +25,7 @@ class Forest(object):
     """
     A forest of VHD files.  Create one using Forest.build(session, leaf_vdis).
     """
-    
+
     def __init__(self, all_vdis, child_map, parent_map, bitmap_map, roots):
         self._all_vdis = all_vdis
         self._child_map = child_map
@@ -39,7 +39,7 @@ class Forest(object):
     def vdi_record(self, vdi_ref):
         """Returns the VDI record corresponding to the given reference."""
         return self._all_vdis[vdi_ref]
-        
+
     def parent(self, vdi_ref):
         """Returns a VDI reference giving the parent of the given vdi_ref,
         or None if vdi_ref is a root."""
@@ -69,7 +69,7 @@ class Forest(object):
                    vdi_ref in leaf_vdis.iterkeys()])
         for sr in srs:
             session.xenapi.SR.scan(sr)
-        
+
         parent_map, roots, all_vdis = \
             Forest.build_parent_map(session, leaf_vdis)
         child_map = {}
