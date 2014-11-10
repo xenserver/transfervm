@@ -8,7 +8,7 @@ thisdir=$(dirname "$0")
 for file in $files
 do
   out=$(PYLINTHOME=/tmp PYLINTRC="$thisdir/pylint.rc" \
-        pylint --persistent=n "$file")
+        pylint --persistent=n "$file" || true)
 
   if [ "$out" ]
   then
