@@ -1,0 +1,4 @@
+config BR2_PACKAGE_XENSTORE
+        bool "xenstore"
+        help
+	  Minimal Xenstore client
