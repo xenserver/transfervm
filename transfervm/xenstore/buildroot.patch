@@ -1,0 +1,12 @@
+--- package/Config.in	2010-05-27 18:37:07.000000000 +0100
++++ package/Config.in	2010-05-27 18:37:54.000000000 +0100
+@@ -4,8 +4,9 @@
+ 
+ comment "The minimum needed to build a uClibc development system"
+ 
++source "package/xenstore/Config.in"
+ source "package/puller/Config.in"
+ 
+ if !BR2_PACKAGE_BUSYBOX_HIDE_OTHERS
+ source "package/bash/Config.in"
+ source "package/bzip2/Config.in"

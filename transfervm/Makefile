@@ -77,9 +77,9 @@ ISCSITARGET_SOURCE_STAMP := $(MY_OBJ_DIR)/.iscsitarget.source.stamp
 ISCSITARGET_BUILD_STAMP := $(MY_OBJ_DIR)/.iscsitarget.build.stamp
 
 PULLER_SOURCE_STAMP := $(MY_OBJ_DIR)/.puller.source.stamp
+XENSTORE_SOURCE_STAMP := $(MY_OBJ_DIR)/.xenstore.source.stamp
 
 MODULES_STAMP := $(MY_OBJ_DIR)/.modules.stamp
-XENSTORE_STAMP := $(MY_OBJ_DIR)/.xenstore.stamp
 
 OVERLAY_STAMP := $(MY_OBJ_DIR)/.overlay.stamp
 
@@ -93,6 +93,7 @@ MAKE_SOURCES := $(REPO)/transfervm/make-sources.sh
 OVERLAY := $(REPO)/transfervm/overlay
 
 PULLER_DIR := $(REPO)/transfervm/puller
+XENSTORE_DIR := $(REPO)/transfervm/xenstore
 
 # Output targets
 KERNEL := $(MY_OUTPUT_DIR)/vmlinuz
@@ -132,7 +133,7 @@ $(INITRD): $(INITRD_STAGING_STAMP)
 	| $(FAKEROOT) cpio --quiet -o -Hnewc \
 	| gzip -v9 >$@.tmp && mv $@.tmp $@
 
-$(INITRD_STAGING_STAMP): $(BUILDROOT_STAMP) $(ISCSITARGET_STAMP) $(MODULES_STAMP) $(XENSTORE_STAMP) $(OVERLAY_STAMP)
+$(INITRD_STAGING_STAMP): $(BUILDROOT_STAMP) $(ISCSITARGET_STAMP) $(MODULES_STAMP) $(OVERLAY_STAMP)
 	# Create the filesystem tree (each dependency installs itself)
 	touch $@
 
@@ -144,7 +145,7 @@ $(BUILDROOT_STAMP): $(BUILDROOT_BUILD_STAMP) $(LIGHTTPD_BUILD_STAMP)
 	rm -rf .subversion
 	touch $@
 
-$(BUILDROOT_BUILD_STAMP): $(BUILDROOT_SOURCE_STAMP) $(PULLER_SOURCE_STAMP)
+$(BUILDROOT_BUILD_STAMP): $(BUILDROOT_SOURCE_STAMP) $(PULLER_SOURCE_STAMP) $(XENSTORE_SOURCE_STAMP)
 	# Buildroot compilation.
 	$(BUILDROOT_MAKE)
 	touch $@
@@ -154,7 +155,9 @@ $(BUILDROOT_SOURCE_STAMP): $(BUILDROOT_SOURCE) buildroot.config
 	tar -C $(MY_OBJ_DIR) -xvzf $(BUILDROOT_SOURCE)
 	cp $(REPO)/transfervm/buildroot.config $(BUILDROOT_DIR)/.config
 	patch -d $(BUILDROOT_DIR) -p0 <$(PULLER_DIR)/buildroot.patch
+	patch -d $(BUILDROOT_DIR) -p0 <$(XENSTORE_DIR)/buildroot.patch
 	rsync -av $(PULLER_DIR)/package/ $(BUILDROOT_DIR)/package/
+	rsync -av $(XENSTORE_DIR)/package/ $(BUILDROOT_DIR)/package/
 	if [ "$(MY_OUTPUT_DIR)" = "/tmp/transfervm-output" ]; \
 	then \
 		patch $(BUILDROOT_DIR)/.config <buildroot.config.patch; \
@@ -240,18 +243,20 @@ $(PULLER_SOURCE_STAMP): $(BUILDROOT_SOURCE_STAMP) $(PULLER_DIR)/Makefile \
 	rm -rf $(BUILDROOT_DIR)/build_i686/puller
 	touch $@
 
+$(XENSTORE_SOURCE_STAMP): $(BUILDROOT_SOURCE_STAMP) $(XENSTORE_DIR)/Makefile \
+			$(wildcard $(XENSTORE_DIR)/*.[ch])
+	mkdir -p $(MY_OBJ_DIR)/xenstore
+	cp $^ $(MY_OBJ_DIR)/xenstore
+	rm -rf $(BUILDROOT_DIR)/build_i686/xenstore
+	touch $@
+
 $(MODULES_STAMP): $(PROJECT_OUTPUTDIR)/kernel-iscsitarget/$(MODULES_FILENAME)
 	tar -C $(INITRD_STAGING_DIR) -xjf $(PROJECT_OUTPUTDIR)/kernel-iscsitarget/$(MODULES_FILENAME)
 	/sbin/depmod -b $(INITRD_STAGING_DIR) $(KERNEL_VERSION)
 	touch $@
 
-$(XENSTORE_STAMP): $(PROJECT_OUTPUTDIR)/uclibc-xen/uclibc-binaries.tar.bz2
-	mkdir -p $(INITRD_STAGING_DIR)/usr/bin/
-	tar --wildcards --extract --bzip2 --file $< --directory $(INITRD_STAGING_DIR) ./usr/bin/xenstore\*
-	touch $@
-
 # Overlay should be the last thing to be added to the INITRD_STAGING_DIR
-$(OVERLAY_STAMP): $(BUILDROOT_STAMP) $(ISCSITARGET_STAMP) $(XENSTORE_STAMP) $(MODULES_STAMP) $(shell find $(OVERLAY) -type f)
+$(OVERLAY_STAMP): $(BUILDROOT_STAMP) $(ISCSITARGET_STAMP) $(MODULES_STAMP) $(shell find $(OVERLAY) -type f)
 	cp -R $(OVERLAY)/* $(INITRD_STAGING_DIR)
 	$(call brand, $(OVERLAY)/etc/init.d/S60xenapiversion) >$(INITRD_STAGING_DIR)/etc/init.d/S60xenapiversion
 	touch $@
