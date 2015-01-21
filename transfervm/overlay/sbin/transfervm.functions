@@ -47,7 +47,7 @@ xenstore_write_ssl_cert() {
     certfile="$2"
 
     # Line breaks have to be removed, as the xenstore-write command only accepts arguments on the command line.
-    xenstore-write -- control/transfer-${device}-ssl-cert "$(tr '\n' '|' < $certfile)"
+    xenstore-write control/transfer-${device}-ssl-cert "$(tr '\n' '|' < $certfile)"
     xenstore-write data/updated "`date`"
 }
 
