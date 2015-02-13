@@ -1,0 +1,11 @@
+#!/bin/sh
+
+echo "Adjusting window sizes to improve performance"
+
+sysctl -w net.core.rmem_max=6291456
+sysctl -w net.core.wmem_max=6291456
+sysctl -w net.ipv4.tcp_rmem="4096 87380 6291456"
+sysctl -w net.ipv4.tcp_wmem="4096 65536 4194304"
+sysctl -w net.ipv4.tcp_wmem="4096 65536 4194304"
+sysctl -w net.ipv4.tcp_mem="3468 4624 6936"
+
