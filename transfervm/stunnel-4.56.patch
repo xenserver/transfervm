@@ -1,0 +1,12 @@
+diff -r 348276a04e70 package/stunnel/stunnel.mk
+--- package/stunnel/stunnel.mk	Fri Jul 17 10:48:38 2015 +0100
++++ package/stunnel/stunnel.mk	Fri Jul 17 14:59:06 2015 +0100
+@@ -3,7 +3,7 @@
+ # stunnel
+ #
+ #############################################################
+-STUNNEL_VERSION:=4.16
++STUNNEL_VERSION:=4.56
+ STUNNEL_SOURCE:=stunnel-$(STUNNEL_VERSION).tar.gz
+ STUNNEL_SITE:=http://www.stunnel.org/download/stunnel/src
+ STUNNEL_CAT:=$(ZCAT)

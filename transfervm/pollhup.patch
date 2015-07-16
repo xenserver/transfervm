@@ -1,0 +1,150 @@
+diff --git a/src/client.c b/src/client.c
+index ad92e2e..f6e1bdb 100644
+--- a/src/client.c
++++ b/src/client.c
+@@ -595,35 +595,6 @@ static void transfer(CLI *c) {
+             }
+         }
+ 
+-        /****************************** check for hangup conditions */
+-        if(s_poll_hup(c->fds, c->sock_rfd->fd)) {
+-            s_log(LOG_INFO, "Read socket closed (hangup)");
+-            sock_open_rd=0;
+-        }
+-        if(s_poll_hup(c->fds, c->sock_wfd->fd)) {
+-            if(c->ssl_ptr) {
+-                s_log(LOG_ERR,
+-                    "Write socket closed (hangup) with %d unsent byte(s)",
+-                    c->ssl_ptr);
+-                longjmp(c->err, 1); /* reset the socket */
+-            }
+-            s_log(LOG_INFO, "Write socket closed (hangup)");
+-            sock_open_wr=0;
+-        }
+-        if(s_poll_hup(c->fds, c->ssl_rfd->fd) ||
+-                s_poll_hup(c->fds, c->ssl_wfd->fd)) {
+-            /* hangup -> buggy (e.g. Microsoft) peer:
+-             * SSL socket closed without close_notify alert */
+-            if(c->sock_ptr) {
+-                s_log(LOG_ERR,
+-                    "SSL socket closed (hangup) with %d unsent byte(s)",
+-                    c->sock_ptr);
+-                longjmp(c->err, 1); /* reset the socket */
+-            }
+-            s_log(LOG_INFO, "SSL socket closed (hangup)");
+-            SSL_set_shutdown(c->ssl, SSL_SENT_SHUTDOWN|SSL_RECEIVED_SHUTDOWN);
+-        }
+-
+         /****************************** retrieve results from c->fds */
+         sock_can_rd=s_poll_canread(c->fds, c->sock_rfd->fd);
+         sock_can_wr=s_poll_canwrite(c->fds, c->sock_wfd->fd);
+@@ -828,6 +799,37 @@ static void transfer(CLI *c) {
+             }
+         }
+ 
++        /****************************** check for hangup conditions */
++        if(s_poll_rdhup(c->fds, c->sock_rfd->fd) &&
++                    !s_poll_canread(c->fds, c->sock_rfd->fd)) {
++            { FILE *f = fopen("/tmp/xlog", "a"); fprintf(f, "%d rdhup closed\n", getpid()); fclose(f); }
++            s_log(LOG_INFO, "Read socket closed (hangup)");
++            sock_open_rd=0;
++        }
++        if(s_poll_hup(c->fds, c->sock_wfd->fd)) {
++            if(c->ssl_ptr) {
++                s_log(LOG_ERR,
++                    "Write socket closed (hangup) with %d unsent byte(s)",
++                    c->ssl_ptr);
++                longjmp(c->err, 1); /* reset the socket */
++            }
++            s_log(LOG_INFO, "Write socket closed (hangup)");
++            sock_open_wr=0;
++        }
++        if((s_poll_hup(c->fds, c->ssl_rfd->fd) && !s_poll_canread(c->fds, c->sock_rfd->fd)) ||
++                s_poll_hup(c->fds, c->ssl_wfd->fd)) {
++            /* hangup -> buggy (e.g. Microsoft) peer:
++             * SSL socket closed without close_notify alert */
++            if(c->sock_ptr) {
++                s_log(LOG_ERR,
++                    "SSL socket closed (hangup) with %d unsent byte(s)",
++                    c->sock_ptr);
++                longjmp(c->err, 1); /* reset the socket */
++            }
++            s_log(LOG_INFO, "SSL socket closed (hangup)");
++            SSL_set_shutdown(c->ssl, SSL_SENT_SHUTDOWN|SSL_RECEIVED_SHUTDOWN);
++        }
++
+         /****************************** check write shutdown conditions */
+         if(sock_open_wr && SSL_get_shutdown(c->ssl)&SSL_RECEIVED_SHUTDOWN && !c->ssl_ptr) {
+             sock_open_wr=0; /* no further write allowed */
+diff --git a/src/network.c b/src/network.c
+index cc11117..231f640 100644
+--- a/src/network.c
++++ b/src/network.c
+@@ -79,8 +79,12 @@ void s_poll_add(s_poll_set *fds, int fd, int rd, int wr) {
+         fds->ufds[i].events=0;
+         fds->nfds++;
+     }
+-    if(rd)
++    if(rd) {
+         fds->ufds[i].events|=POLLIN;
++#ifdef POLLRDHUP
++        fds->ufds[i].events|=POLLRDHUP;
++#endif
++    }
+     if(wr)
+         fds->ufds[i].events|=POLLOUT;
+ }
+@@ -103,12 +107,27 @@ int s_poll_canwrite(s_poll_set *fds, int fd) {
+     return 0; /* not listed in fds */
+ }
+ 
++/* best doc: http://lxr.free-electrons.com/source/net/ipv4/tcp.c#L456 */
++
+ int s_poll_hup(s_poll_set *fds, int fd) {
+     unsigned int i;
+ 
+     for(i=0; i<fds->nfds; i++)
+         if(fds->ufds[i].fd==fd)
+-            return fds->ufds[i].revents&POLLHUP;
++            return fds->ufds[i].revents&POLLHUP; /* read and write closed */
++    return 0; /* not listed in fds */
++}
++
++int s_poll_rdhup(s_poll_set *fds, int fd) {
++    unsigned int i;
++
++    for(i=0; i<fds->nfds; i++)
++        if(fds->ufds[i].fd==fd)
++#ifdef POLLRDHUP
++            return fds->ufds[i].revents&POLLRDHUP; /* read closed */
++#else
++            return fds->ufds[i].revents&POLLHUP; /* read and write closed */
++#endif
+     return 0; /* not listed in fds */
+ }
+ 
+@@ -336,6 +355,12 @@ int s_poll_hup(s_poll_set *fds, int fd) {
+     return 0; /* FIXME: how to detect HUP condition with select()? */
+ }
+ 
++int s_poll_rdhup(s_poll_set *fds, int fd) {
++    (void)fds; /* skip warning about unused parameter */
++    (void)fd; /* skip warning about unused parameter */
++    return 0; /* FIXME: how to detect RDHUP condition with select()? */
++}
++
+ int s_poll_error(s_poll_set *fds, int fd) {
+     /* error conditions are signaled as read, but apparently *not* in Winsock:
+      * http://msdn.microsoft.com/en-us/library/windows/desktop/ms737625%28v=vs.85%29.aspx */
+diff --git a/src/prototypes.h b/src/prototypes.h
+index 0b02b54..90934e8 100644
+--- a/src/prototypes.h
++++ b/src/prototypes.h
+@@ -385,6 +385,7 @@ void s_poll_add(s_poll_set *, int, int, int);
+ int s_poll_canread(s_poll_set *, int);
+ int s_poll_canwrite(s_poll_set *, int);
+ int s_poll_hup(s_poll_set *, int);
++int s_poll_rdhup(s_poll_set *, int);
+ int s_poll_error(s_poll_set *, int);
+ int s_poll_wait(s_poll_set *, int, int);
+ 
