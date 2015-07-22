@@ -57,8 +57,9 @@ EOF
 
     if [ "$use_ssl" = "true" ] ; then
         cat <<EOF
-ssl.engine = "enable"
-ssl.pemfile = "$pemfile"
+#ssl.engine = "enable"
+#ssl.pemfile = "$pemfile"
+ssl.bind = "localhost"
 EOF
     else
         cat <<EOF
@@ -200,7 +201,7 @@ add_http_server() {
 
     configfile="/etc/lighttpd.$device.conf"
     authfile="/etc/lighttpd.$device.plainpasswd"
-    pemfile="/etc/lighttpd.$device.sslpem"
+    pemfile="/etc/lighttpd.sslpem"
     echo "$username:$password" >"$authfile"
 
     if [ "$use_ssl" = "true" ] ; then
