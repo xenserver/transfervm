@@ -573,8 +573,10 @@ def write_device_config(session, vm, vbds, expose_args):
     # IP address.
     add_all_devices('transfer_mode', expose_args['transfer_mode'])
 
-    xenstoresslpath = 'vm-data/transfer/use_ssl'
-    session.xenapi.VM.add_to_xenstore_data(vm, xenstoresslpath, str(expose_args['use_ssl']))
+    session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/use_ssl',
+                                            str(expose_args['use_ssl']))
+    session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/ssl_version',
+                                            str(expose_args['ssl_version']))
 
     if expose_args['timeout_minutes']:
         add_all_devices('timeout', expose_args['timeout_minutes'])
@@ -925,6 +927,7 @@ def parse_network_args(args, parsedargs):
 
     copy('network_uuid')
     copy('network_mac', '')
+    copy('ssl_version', '')
 
     if parsedargs['network_mode'] == 'manual':
         copy('network_ip')

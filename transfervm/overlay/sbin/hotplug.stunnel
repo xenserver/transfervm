@@ -1,5 +1,9 @@
 #!/bin/sh
 
+sslversion=$(/usr/bin/xenstore-read "vm-data/transfer/ssl_version")
+if [ "$sslversion" == "" ]; then
+    sslversion="TLSv1.2"
+fi
 
 global_config="
 foreground      = yes
@@ -7,7 +11,7 @@ output          = /root/log
 pid             = /etc/stunnel.pid
 fips            = no
 renegotiation   = no
-sslVersion      = TLSv1.2
+sslVersion      = $sslversion
 debug           = 1
 "
 
