@@ -573,9 +573,8 @@ def write_device_config(session, vm, vbds, expose_args):
     # IP address.
     add_all_devices('transfer_mode', expose_args['transfer_mode'])
 
-    if expose_args['transfer_mode'] == "iscsi":
-        xenstoresslpath = 'vm-data/transfer/use_ssl'
-        session.xenapi.VM.add_to_xenstore_data(vm, xenstoresslpath, str(expose_args['use_ssl']))
+    xenstoresslpath = 'vm-data/transfer/use_ssl'
+    session.xenapi.VM.add_to_xenstore_data(vm, xenstoresslpath, str(expose_args['use_ssl']))
 
     if expose_args['timeout_minutes']:
         add_all_devices('timeout', expose_args['timeout_minutes'])

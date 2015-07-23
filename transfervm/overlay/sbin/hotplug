@@ -14,6 +14,7 @@ echo "hotplug: $ACTION $1 /sys$DEVPATH"
 . /sbin/hotplug.iscsi
 . /sbin/hotplug.lighttpd
 . /sbin/hotplug.puller
+. /sbin/hotplug.stunnel
 
 xenstore=/usr/bin/xenstore
 
@@ -44,7 +45,6 @@ case $1 in
                 case $transfer_mode in
                     http|bits)
                         add_http_server $blk_name $transfer_mode
-                        initiate_stunnel "/usr/http.config"
                         ;;
                     http_pull)
                         add_http_server $blk_name $transfer_mode
@@ -52,7 +52,6 @@ case $1 in
                         ;;
                     iscsi)
                         add_iscsi_target $blk_name
-                        initiate_stunnel "/usr/iscsi.config"
                         ;;
                     *) echo "Unknown transfer mode $transfer_mode." ;;
                 esac

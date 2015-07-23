@@ -201,16 +201,27 @@ add_http_server() {
 
     configfile="/etc/lighttpd.$device.conf"
     authfile="/etc/lighttpd.$device.plainpasswd"
-    pemfile="/etc/lighttpd.sslpem"
+    pemfile="/etc/lighttpd.$device.sslpem"
     echo "$username:$password" >"$authfile"
 
     if [ "$use_ssl" = "true" ] ; then
+
         # Sleep here till we have an IP address (required for the certificate)
         while ! xenstore-exists "attr/eth0" ; do
             sleep 1
         done
 
         generate_ssl_keys "$device" "$pemfile"
+
+        internal_port="80"
+        stunnelconf="/usr/http.config"
+
+        generate_stunnel_config $stunnelconf $pemfile $port $internal_port "http"
+        initiate_stunnel $stunnelconf
+
+        # For lighttpd config, use the internal port if SSL is in use.
+        port=$internal_port
+
     fi
 
     generate_lighttpd_config "$device" "$port" "$use_ssl" "$transfer_mode" \
