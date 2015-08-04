@@ -43,7 +43,7 @@ BUILDROOT_SOURCE := $(BR_DISTFILES)/buildroot-$(BUILDROOT_VERSION).tar.gz
 BUILDROOT_DIR := $(MY_OBJ_DIR)/buildroot-$(BUILDROOT_VERSION)
 BUILDROOT_MAKE := LOCAL_DISTFILES=$(CARBON_DISTFILES)/buildroot $(MAKE) -C $(BUILDROOT_DIR)
 BUILDROOT_OUTPUT_IMAGE := $(BUILDROOT_DIR)/binaries/transfervm/rootfs.i686.tar
-OPENSSL_VERSION_IN_BUILDROOT := 1.0.2a
+OPENSSL_VERSION_IN_BUILDROOT := 1.0.2d
 OPENSSL_OUTPUT_DIR := $(BUILDROOT_DIR)/build_i686/openssl-$(OPENSSL_VERSION_IN_BUILDROOT)
 LIGHTTPD_VERSION_IN_BUILDROOT := 1.4.20
 LIGHTTPD_BUILD_DIR := $(BUILDROOT_DIR)/build_i686/lighttpd-$(LIGHTTPD_VERSION_IN_BUILDROOT)
@@ -170,9 +170,9 @@ $(BUILDROOT_SOURCE_STAMP): $(BUILDROOT_SOURCE) buildroot.config
 	rm $(BUILDROOT_DIR)/package/stunnel/stunnel-have-pty.patch
 	cp pollhup.patch $(BUILDROOT_DIR)/package/stunnel/pollhup.patch
 
-	# Rev openssl to 1.0.2a
-	patch -d $(BUILDROOT_DIR) -p0 <openssl-1.0.2a.patch
-	patch -d $(BUILDROOT_DIR) -p0 <openssl-1.0.2a-patches.patch
+	# Rev openssl to 1.0.2d
+	patch -d $(BUILDROOT_DIR) -p0 <openssl-1.0.2d.patch
+	patch -d $(BUILDROOT_DIR) -p0 <openssl-1.0.2d-patches.patch
 	$(BUILDROOT_MAKE) oldconfig
 	touch $@
 

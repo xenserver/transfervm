@@ -5,7 +5,7 @@ exporting patch:
 #      Thu Jul 16 14:33:34 2015 +0100
 # Node ID 56a16b760b268fcb5d7425f55f17e0733b54e4a9
 # Parent  7567d4df22eaac824ca4c0ab3529be307efab298
-Update to OpenSSL 1.0.2a
+Update to OpenSSL 1.0.2d
 
 diff -r 7567d4df22ea -r 56a16b760b26 openssl-0.9.8g-avr32-asm-optimizations.patch.avr32
 --- package/openssl/openssl-0.9.8g-avr32-asm-optimizations.patch.avr32	Thu Jul 16 14:32:53 2015 +0100
@@ -6436,7 +6436,7 @@ diff -r 7567d4df22ea -r 56a16b760b26 openssl.mk
  #
  #############################################################
 -OPENSSL_VERSION:=0.9.8g
-+OPENSSL_VERSION:=1.0.2a
++OPENSSL_VERSION:=1.0.2d
  OPENSSL_SITE:=http://www.openssl.org/source
  
  OPENSSL_TARGET_ARCH=generic32
