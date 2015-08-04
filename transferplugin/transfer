@@ -1617,8 +1617,7 @@ def remap_vm(session, args):
         return "Written to %s" % debug_output
     else:
         log.debug('Importing new metadata...')
-        new_vm_ref = vm_metadata.import_vm_metadata('http', 'localhost', 80,
-                                                    session, new_vm_metadata)
+        new_vm_ref = vm_metadata.import_vm_metadata(session, new_vm_metadata)
         log.debug('Importing new metadata done.  VM is %s.', new_vm_ref)
 
         log.debug('Deleting metadata VDI...')

@@ -41,19 +41,22 @@ class InvalidOVAXML(PluginError):
     def __init__(self, *args):
         PluginError.__init__(self, *args)
 
+def import_vm_metadata(session, tarball):
+    """Import metadata via localhost"""
 
-def import_vm_metadata(protocol, host, port, session, tarball):
+    protocol = "http"
+    host = "localhost"
+    port = 80
+
     name = 'VM metadata import'
     task_ref = session.xenapi.task.create(name, '')
     url = ('/import_metadata?session_id=%s&task_id=%s&force=true' %
            (session.handle, task_ref))
     log.debug('Uploading metadata to %s://%s:%s%s (len %d)', protocol, host,
               port, url, len(tarball))
+
     try:
-        if protocol == 'https':
-            conn = httplib.HTTPSConnection(host, port)
-        else:
-            conn = httplib.HTTPConnection(host, port)
+        conn = httplib.HTTPConnection(host, port)
         try:
             conn.request('PUT', url, tarball)
             response = conn.getresponse()
