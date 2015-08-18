@@ -149,7 +149,7 @@ def iscsi_id(vdi_uuid):
     """
     # Currently just returning first 24 characters - this works under the assumption
     # that the randomness of each character is uniformly distributed.
-    return vdi_uuid.replace('-','')[0:24]
+    return vdi_uuid.replace('-', '')[0:24]
 
 
 
@@ -261,8 +261,8 @@ def get_template_and_host(session, vdi_uuid, target_host_uuid):
         tvm_template = session.xenapi.host.call_plugin(host_ref, 'transfer', 'prepare_transfervm_template', args)
 
         transfer_templates = [vm[0] for vm
-                          in templates_with_records(session).iteritems()
-                          if transfer_vm_template(vm[1])]
+                              in templates_with_records(session).iteritems()
+                              if transfer_vm_template(vm[1])]
         if not transfer_templates:
             raise ConfigurationError('No template with other_config key %s' % UTILITY_VM)
 
@@ -329,8 +329,7 @@ def get_management_pifs(session):
     host_ref = session.xenapi.session.get_this_host(session.handle)
     pifs = session.xenapi.host.get_PIFs(host_ref)
     for pif_ref in pifs:
-        pif = ignore_failure(session.xenapi.PIF.get_record,
-                                       pif_ref)
+        pif = ignore_failure(session.xenapi.PIF.get_record, pif_ref)
         if pif and pif['management']:
             result.append(pif)
     return result
@@ -574,9 +573,9 @@ def write_device_config(session, vm, vbds, expose_args):
     add_all_devices('transfer_mode', expose_args['transfer_mode'])
 
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/use_ssl',
-                                            str(expose_args['use_ssl']))
+                                           str(expose_args['use_ssl']))
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/ssl_version',
-                                            str(expose_args['ssl_version']))
+                                           str(expose_args['ssl_version']))
 
     if expose_args['timeout_minutes']:
         add_all_devices('timeout', expose_args['timeout_minutes'])
@@ -741,7 +740,7 @@ def read_vm_config(session, vm, vdi_uuids_str):
     if oc['transfer_vdi_uuid'] != vdi_uuids_str and oc[vhd_str] != vdi_uuids_str:
         raise ConfigurationError('The utility VM is configured to expose VDI %s, not %s.' %
                                  (oc['transfer_vdi_uuid'], vdi_uuids_str))
-    conf = {'vdi_uuid': vdi_uuids_str }
+    conf = {'vdi_uuid': vdi_uuids_str}
 
     def copy_conf(k):
         conf[k] = oc['transfer_%s' % k]
@@ -779,7 +778,7 @@ def read_vm_config(session, vm, vdi_uuids_str):
             copy_conf('iscsi_sn_%s' % vdi_uuid)
             copy_conf('iscsi_id_%s' % vdi_uuid)
         else:
-            assert(False)
+            assert False
 
     if 'transfer_non_leaf_vdi_uuids' in oc:
         copy_conf('non_leaf_vdi_uuids')
@@ -916,10 +915,10 @@ def parse_network_args(args, parsedargs):
                                  default_port(parsedargs['transfer_mode'],
                                               parsedargs['use_ssl']))
 
-    def copy(k, d = None):
+    def copy(k, d=None):
         parsedargs[k] = validate_exists(args, k, d)
 
-    def validate_address(k, addr_type = "IP"):
+    def validate_address(k, addr_type="IP"):
         if addr_type == 'IP':
             validate_ip(parsedargs[k])
         elif addr_type == 'NETMASK':
@@ -950,7 +949,7 @@ def parse_network_args(args, parsedargs):
 def parse_misc_expose_args(args, parsedargs):
     parsedargs['read_only'] = validate_bool(args, 'read_only', 'false')
     if (parsedargs['transfer_mode'] == 'http_pull' and
-        parsedargs['read_only']):
+            parsedargs['read_only']):
         raise ArgumentError('read_only=true cannot be used with transfer_mode=http_pull')
     parsedargs['timeout_minutes'] = \
         validate_nonnegative_int(args, 'timeout_minutes', '0')
@@ -1126,7 +1125,7 @@ def clean_sr_config(session):
         oc = session.xenapi.SR.get_other_config(sr)
         for key in oc:
             if key.startswith("tvm_"):
-                vdi_uuid = key.replace("tvm_","")
+                vdi_uuid = key.replace("tvm_", "")
                 args = {}
                 args['vdi_uuid'] = vdi_uuid
                 try:
@@ -1188,7 +1187,7 @@ def get_record(session, args):
         wait_config_ready(session, vm, devices)
         if config['use_ssl'] == 'true':
             ssl = True
-            config['ssl_cert'] = blocking_read_ssl_cert_config(session, vm, devices[-1]).replace('|','\n')
+            config['ssl_cert'] = blocking_read_ssl_cert_config(session, vm, devices[-1]).replace('|', '\n')
         else:
             ssl = False
         # Add convenience fields
@@ -1268,7 +1267,7 @@ def get_graphviz_forest(session, args):
 
     all_vms = get_all_vms(session, vm_uuids)
     leaf_vdis = get_vdis(session, all_vms)
-    forest = Forest.build(session, leaf_vdis, include_bitmaps = False)
+    forest = Forest.build(session, leaf_vdis, include_bitmaps=False)
 
     result = 'digraph "%s" {\n' % vm_uuids
     for vdi_ref in forest.all_vdis().iterkeys():
@@ -1540,7 +1539,8 @@ def compute_tree_config_non_leaf(forest, leaf_vdis, vdi_ref, config):
     config[vdi_ref]['vdi_size'] = forest.vdi_record(vdi_ref)['virtual_size']
     config[vdi_ref]['vhd_block_map'] = \
         remap_block_map(forest,
-            vhd_bitmaps.compute_block_map(forest, leaf_vdis, vdi_ref))
+                        vhd_bitmaps.compute_block_map(forest,
+                                                      leaf_vdis, vdi_ref))
 
 def remap_block_map(forest, m):
     result = {}
@@ -1593,7 +1593,7 @@ def remap_vm(session, args):
     if not this_host_ref in host_list:
         if host_list:
             return session.xenapi.host.call_plugin(host_list[0], 'transfer',
-                                            'remap_vm', args)
+                                                   'remap_vm', args)
         else:
             raise XenAPI.Failure(["NO_HOSTS_CAN_SEE_SR",
                                   "There are no hosts which can see SR %s" % sr_ref])
@@ -1755,7 +1755,7 @@ def run_bash_script(name):
     process = subprocess.Popen([name],
                                stdout=subprocess.PIPE,
                                cwd='/')
-    _ , stderr = process.communicate()
+    _, stderr = process.communicate()
     if process.returncode == 0:
         return True
     else:
@@ -1809,7 +1809,7 @@ def prepare_transfervm_template(session, args):
     # Make sure the templates disks have not been removed
     vbds = _get_vm_vbds(session, template)
 
-    if ( (has_rpm_state_changed() != True) and (template is not None) and vbds):
+    if (has_rpm_state_changed() != True) and (template is not None) and vbds:
         return template
     else:
         install_transfer_vm_template()
@@ -1833,8 +1833,8 @@ if __name__ == '__main__':
                            'get_graphviz': get_graphviz,
                            'get_graphviz_forest': get_graphviz_forest,
                            'remap_vm': remap_vm,
-			   'save_logs': save_logs,
+                           'save_logs': save_logs,
                            'get_import_instructions': get_import_instructions,
                            'prepare_transfervm_template': prepare_transfervm_template,
                            'number_of_ip_addresses_needed': number_of_ip_addresses_needed,
-                           })
+                          })

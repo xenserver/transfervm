@@ -258,7 +258,7 @@ def has_member(node, k, v):
     return False
 
 
-def is_member(node, k, v = None):
+def is_member(node, k, v=None):
     if node.localName != 'member':
         return False
     cn = node.childNodes
