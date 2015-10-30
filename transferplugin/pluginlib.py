@@ -100,8 +100,8 @@ def unwrap_plugin_exceptions(func, *args, **kwargs):
     except XenAPI.Failure, exn:
         log.debug("Got exception: %s", exn)
         if (len(exn.details) == 4 and
-            exn.details[0] == 'XENAPI_PLUGIN_EXCEPTION' and
-            exn.details[2] == 'Failure'):
+                exn.details[0] == 'XENAPI_PLUGIN_EXCEPTION' and
+                exn.details[2] == 'Failure'):
             params = None
             try:
                 params = eval(exn.details[3])
@@ -168,7 +168,7 @@ def validate_ip(ip_address):
     first_segment = re.compile(r"^\d{1,3}")
     x = int(first_segment.search(ip_address).group(0))
     y = int(last_segment.search(ip_address).group(0))
-    if (x == 0 or y == 0):
+    if x == 0 or y == 0:
         raise InvalidIPError("The supplied IP address: %s is invalid" % ip_address)
 
 def validate_netmask(netmask):
@@ -301,17 +301,17 @@ def get_local_pbd(session, sr_ref):
 
 def create_vdi(session, sr_ref, name_label, virtual_size, read_only):
     vdi_ref = session.xenapi.VDI.create(
-        { 'name_label': name_label,
-          'name_description': '',
-          'SR': sr_ref,
-          'virtual_size': str(virtual_size),
-          'type': 'User',
-          'sharable': False,
-          'read_only': read_only,
-          'xenstore_data': {},
-          'other_config': {},
-          'sm_config': {},
-          'tags': [] })
+        {'name_label': name_label,
+         'name_description': '',
+         'SR': sr_ref,
+         'virtual_size': str(virtual_size),
+         'type': 'User',
+         'sharable': False,
+         'read_only': read_only,
+         'xenstore_data': {},
+         'other_config': {},
+         'sm_config': {},
+         'tags': []})
     log.debug('Created VDI %s (%s, %s, %s) on %s.', vdi_ref, name_label,
               virtual_size, read_only, sr_ref)
     return vdi_ref
@@ -359,7 +359,7 @@ def vbd_unplug_with_retry(session, vbd):
             return
         except XenAPI.Failure, e:
             if (len(e.details) > 0 and
-                e.details[0] == 'DEVICE_DETACH_REJECTED'):
+                    e.details[0] == 'DEVICE_DETACH_REJECTED'):
                 log.debug('VBD.unplug rejected: retrying...')
                 time.sleep(1)
             elif (len(e.details) > 0 and
@@ -401,7 +401,7 @@ def get_sr_master(session, sr_ref):
     else:
         log.debug("SR is shared storage - getting pool master")
         pools = session.xenapi.pool.get_all()
-        assert(len(pools) == 1)
+        assert len(pools) == 1
         pool_master = session.xenapi.pool.get_master(pools[0])
         log.debug("SR Master is %s", pool_master)
         return pool_master

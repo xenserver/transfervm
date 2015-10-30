@@ -41,7 +41,7 @@ VHD_STYLE_NOT_VHD = 4
 def get_sr_style(session, sr_ref):
     typ = session.xenapi.SR.get_type(sr_ref)
     if (typ == 'nfs' or
-        typ == 'ext'):
+            typ == 'ext'):
         return VHD_STYLE_SR_MOUNT
     elif (typ == 'lvm' or
           typ == 'lvmohba' or

@@ -64,7 +64,7 @@ class Forest(object):
         return self._roots
 
 
-    def build(session, leaf_vdis, include_bitmaps = True):
+    def build(session, leaf_vdis, include_bitmaps=True):
         srs = set([session.xenapi.VDI.get_SR(vdi_ref) for
                    vdi_ref in leaf_vdis.iterkeys()])
         for sr in srs:

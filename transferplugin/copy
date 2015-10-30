@@ -204,8 +204,8 @@ def convert_map_to_locations(local_session, remote_session, vdi_map):
         new_ref = local_session.xenapi.VDI.get_by_uuid(v)
         new_rec = local_session.xenapi.VDI.get_record(new_ref)
         result[old_rec['location']] = \
-            { 'ref': new_ref,
-              'location': new_rec['location']
+            {'ref': new_ref,
+             'location': new_rec['location']
             }
     return result
 
@@ -541,8 +541,8 @@ def get_vdi_and_map(vdi_map, local_session, remote_session, local_sr_uuid,
                            vdi_rec['uuid'], local_sr_uuid, extra_args)
     new_vdi_location = \
         local_session.xenapi.VDI.get_location(new_vdi_ref)
-    vdi_map[vdi_rec['location']] = { 'ref': new_vdi_ref,
-                                     'location': new_vdi_location }
+    vdi_map[vdi_rec['location']] = {'ref': new_vdi_ref,
+                                    'location': new_vdi_location}
     log.debug('VDI %s(%s) copied to %s', vdi_rec['uuid'],
               vdi_rec['location'], new_vdi_location)
 
@@ -741,11 +741,11 @@ def get_expose_record(session, host_ref, record_handle):
             unwrap_plugin_exceptions(
                 session.xenapi.host.call_plugin,
                 host_ref, 'transfer', 'get_record',
-                { 'record_handle': record_handle }))
+                {'record_handle': record_handle}))
     except XenAPI.Failure, exn:
         if (len(exn.details) > 3 and
-            exn.details[0] == 'XENAPI_PLUGIN_EXCEPTION' and
-            exn.details[2] == 'ArgumentError'):
+                exn.details[0] == 'XENAPI_PLUGIN_EXCEPTION' and
+                exn.details[2] == 'ArgumentError'):
             log.debug('Transfer VM %s has gone away', record_handle)
             raise ExposeDisappeared()
         else:
@@ -768,7 +768,7 @@ def unexpose(session, record_handle):
 
         session.xenapi.host.call_plugin(
             host_ref, 'transfer', 'unexpose',
-            { 'record_handle': record_handle })
+            {'record_handle': record_handle})
 
         log.debug("Unexposing %s done.", record_handle)
     except Exception, exn:
@@ -914,4 +914,4 @@ if __name__ == '__main__':
                            'get_vm': get_vm,
                            'get_vm_forest': get_vm_forest,
                            'get_metadata': get_metadata,
-                           })
+                          })
