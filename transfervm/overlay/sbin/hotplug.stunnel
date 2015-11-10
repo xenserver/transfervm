@@ -2,7 +2,7 @@
 
 sslversion=$(/usr/bin/xenstore-read "vm-data/transfer/ssl_version")
 if [ "$sslversion" == "" ]; then
-    sslversion="SSLv3 TLSv1"
+    sslversion="all"
 fi
 
 global_config="
