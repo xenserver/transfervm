@@ -47,6 +47,7 @@ ALL_WRAPPERS := $(addprefix $(REPO)/transferplugin/, do-copy do-transfer)
 TRANSFER_SPEC := $(MY_OBJ_DIR)/xenserver-transfer-vm.spec
 TRANSFER_RPM_TMP_DIR := $(MY_OBJ_DIR)/RPM_BUILD_DIRECTORY/tmp/xenserver-transfer-vm
 TRANSFER_RPM := $(MY_OBJ_DIR)/RPMS/noarch/xenserver-transfer-vm-$(PRODUCT_VERSION)-$(BUILD_NUMBER).noarch.rpm
+OUTPUT_RPM_DIR := $(MY_OUTPUT_DIR)/RPMS
 
 SUPP_PACK_ISO := $(MY_OUTPUT_DIR)/xenserver-transfer-vm.iso
 SUPP_PACK_DIR := $(MY_OUTPUT_DIR)/PACKAGES.transfer-vm
@@ -54,7 +55,7 @@ TESTS_TARBALL := $(MY_OUTPUT_DIR)/transfer-tests.tar.bz2
 
 TRANSFER_RPM_LINK := $(MY_OUTPUT_DIR)/xenserver-transfer-vm.noarch.rpm
 
-OUTPUT := $(SUPP_PACK_ISO) $(TRANSFER_RPM_LINK) $(TESTS_TARBALL)
+OUTPUT := $(SUPP_PACK_ISO) $(TRANSFER_RPM_LINK) $(OUTPUT_RPM_DIR) $(TESTS_TARBALL)
 
 .PHONY: build
 build: validate $(OUTPUT)
@@ -82,6 +83,9 @@ $(TRANSFER_RPM): $(TRANSFER_SPEC) $(TRANSFER_VM) $(RPM_SOURCESDIR)/.dirstamp pyl
 	          $(TRANSFER_RPM_TMP_DIR)/$(PLUGIN_DEST)/*
 	cd $(TRANSFER_RPM_TMP_DIR) && tar zcvf $(RPM_SOURCESDIR)/transfer-vm.tar.gz *
 	$(RPMBUILD) -bb $<
+
+$(OUTPUT_RPM_DIR): $(RPM_RPMSDIR)
+	cp -a $< $@
 
 $(TESTS_TARBALL): $(wildcard transfertests/*.py)
 	tar cjf $(TESTS_TARBALL) transfertests/*.py
