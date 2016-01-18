@@ -22,7 +22,7 @@ import subprocess
 from pluginlib import *
 
 
-VHD_UTIL = '/usr/bin/vhd-util'
+VHD_UTIL = filter(os.path.exists, ["/usr/bin/vhd-util", "/usr/sbin/vhd-util"])[0]
 SR_MOUNT = '/var/run/sr-mount'
 SR_MOUNT_VDI_PATTERN = SR_MOUNT + '/%s/%s.vhd'
 LOCAL_VDI_PATTERN = '/dev/VG_XenStorage-%s/VHD-%s'
