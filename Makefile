@@ -65,7 +65,7 @@ $(TRANSFER_RPM_LINK):
 
 $(SUPP_PACK_ISO): $(TRANSFER_RPM)
 	$(call mkdir_clean,$(SUPP_PACK_DIR))
-	python setup.py --out $(SUPP_PACK_DIR) --pdn $(PRODUCT_BRAND) --pdv $(PRODUCT_VERSION) --bld $(BUILD) $<
+	python setup.py --out $(SUPP_PACK_DIR) --pln $(PLATFORM_NAME) --plv $(PLATFORM_VERSION) --bld $(BUILD) $<
 	mv -f $(SUPP_PACK_DIR)/$(notdir $@) $@
 	mkisofs -A "Citrix" -V "Transfer VM Source ISO" -J -joliet-long -r -o $(MY_OUTPUT_DIR)/xenserver-transfer-vm-source.iso $(TRANSFER_VM_SRC)
 
