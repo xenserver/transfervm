@@ -31,7 +31,6 @@ generate_stunnel_config() {
 [$name]
 client      = no
 cert        = $cert
-ciphers     = !SSLv2:RSA+AES128-SHA:RSA+AES256-SHA:RSA+AES128-SHA:RSA+RC4-SHA:RSA+RC4-MD5:RSA+DES-CBC3-SHA
 options     = NO_SSLv2
 accept      = $accept
 connect     = $connect"
