@@ -531,13 +531,34 @@ def write_network_config(session, vm, expose_args):
         add('mask', expose_args['network_mask'])
         add('gateway', expose_args['network_gateway'])
 
+def get_installation_uuid():
+    uuid = ''
+    fp = None
+    try:
+        fp = open('/etc/xensource-inventory', 'r')
+        for line in fp.read().splitlines():
+            parts = line.split('=', 1)
+            if len(parts) != 2:
+                continue
+            key, value = parts[0].strip(), parts[1].strip().strip('\'"')
+            if key == 'INSTALLATION_UUID':
+                uuid = value
+    except:
+        pass
+    if fp:
+        fp.close()
+    return uuid
 
 def get_ssl_legacy(session):
     try:
-        return session.xenapi.host.get_ssl_legacy(session.xenapi.host.get_all()[0])
+        uuid = get_installation_uuid()
+        if uuid:
+            host = session.xenapi.host.get_by_uuid(uuid)
+        else:
+            host = session.xenapi.pool.get_master(session.xenapi.pool.get_all()[0])
+        return session.xenapi.host.get_ssl_legacy(host)
     except:
         return True
-
 
 def write_device_config(session, vm, vbds, expose_args):
     devices = []
