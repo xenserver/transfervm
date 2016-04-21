@@ -531,32 +531,11 @@ def write_network_config(session, vm, expose_args):
         add('mask', expose_args['network_mask'])
         add('gateway', expose_args['network_gateway'])
 
-def get_installation_uuid():
-    uuid = ''
-    fp = None
+def is_ssl_legacy(session):
     try:
-        fp = open('/etc/xensource-inventory', 'r')
-        for line in fp.read().splitlines():
-            parts = line.split('=', 1)
-            if len(parts) != 2:
-                continue
-            key, value = parts[0].strip(), parts[1].strip().strip('\'"')
-            if key == 'INSTALLATION_UUID':
-                uuid = value
-    except:
-        pass
-    if fp:
-        fp.close()
-    return uuid
-
-def get_ssl_legacy(session):
-    try:
-        uuid = get_installation_uuid()
-        if uuid:
-            host = session.xenapi.host.get_by_uuid(uuid)
-        else:
-            host = session.xenapi.pool.get_master(session.xenapi.pool.get_all()[0])
-        return session.xenapi.host.get_ssl_legacy(host)
+        this_host_uuid = get_from_xensource_inventory('INSTALLATION_UUID')
+        this_host_ref = session.xenapi.host.get_by_uuid(this_host_uuid)
+        return session.xenapi.host.get_ssl_legacy(this_host_ref)
     except:
         return True
 
@@ -605,8 +584,11 @@ def write_device_config(session, vm, vbds, expose_args):
                                            str(expose_args['use_ssl']))
     ssl_version = str(expose_args['ssl_version'])
     if ssl_version == '':
-        if not get_ssl_legacy(session):
+        ssl_legacy = is_ssl_legacy(session)
+        log.debug('write_device_config: ssl_version=%r, ssl_legacy=%r', ssl_version, ssl_legacy)
+        if not ssl_legacy:
             ssl_version = 'TLSv1.2'
+            log.info('write_device_config: force set ssl_version=%r', ssl_version)
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/ssl_version',
                                            ssl_version)
 
