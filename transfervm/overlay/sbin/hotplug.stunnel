@@ -5,6 +5,15 @@ if [ "$sslversion" == "" ]; then
     sslversion="all"
 fi
 
+sslciphers=$(/usr/bin/xenstore-read "vm-data/transfer/ssl_ciphers")
+if [ "$sslciphers" == "" ]; then
+    if [ "$sslversion" == "TLSv1.2" ]; then
+        sslciphers="!SSLv2:RSA+AES128-SHA256"
+    else
+        sslciphers="!SSLv2:RSA+AES128-SHA256:RSA+AES256-SHA:RSA+AES128-SHA:RSA+RC4-SHA:RSA+RC4-MD5:RSA+DES-CBC3-SHA"
+    fi
+fi
+
 global_config="
 foreground      = yes
 output          = /root/log
@@ -12,6 +21,7 @@ pid             = /etc/stunnel.pid
 fips            = no
 renegotiation   = no
 sslVersion      = $sslversion
+ciphers         = $sslciphers
 debug           = 1
 "
 
@@ -36,5 +46,9 @@ accept      = $accept
 connect     = $connect"
 
     echo "$http_config" >> $loc
+
+    if [ "$sslversion" == "TLSv1.2" ]; then
+        echo "options     = NO_SSLv3" >> $loc
+    fi
 
 }

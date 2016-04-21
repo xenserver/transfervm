@@ -531,6 +531,14 @@ def write_network_config(session, vm, expose_args):
         add('mask', expose_args['network_mask'])
         add('gateway', expose_args['network_gateway'])
 
+
+def get_ssl_legacy(session):
+    try:
+        return session.xenapi.host.get_ssl_legacy(session.xenapi.host.get_all()[0])
+    except:
+        return True
+
+
 def write_device_config(session, vm, vbds, expose_args):
     devices = []
     vdi_uuids = expose_args['vdi_uuid']
@@ -574,8 +582,12 @@ def write_device_config(session, vm, vbds, expose_args):
 
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/use_ssl',
                                            str(expose_args['use_ssl']))
+    ssl_version = str(expose_args['ssl_version'])
+    if ssl_version == '':
+        if not get_ssl_legacy(session):
+            ssl_version = 'TLSv1.2'
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/ssl_version',
-                                           str(expose_args['ssl_version']))
+                                           ssl_version)
 
     if expose_args['timeout_minutes']:
         add_all_devices('timeout', expose_args['timeout_minutes'])
