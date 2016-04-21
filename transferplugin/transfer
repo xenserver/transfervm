@@ -22,6 +22,8 @@
 # XenAPI plugin for exposing VDIs over the network.
 #
 
+#pylint: disable=I0011,R0914
+
 import random
 import time
 import xmlrpclib
