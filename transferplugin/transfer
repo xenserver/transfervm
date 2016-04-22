@@ -22,8 +22,6 @@
 # XenAPI plugin for exposing VDIs over the network.
 #
 
-#pylint: disable=I0011,R0914
-
 import random
 import time
 import xmlrpclib
@@ -541,6 +539,16 @@ def is_ssl_legacy(session):
     except:
         return True
 
+def get_suitable_ssl_version(session, default_version):
+    ssl_version = default_version
+    if ssl_version == '':
+        ssl_legacy = is_ssl_legacy(session)
+        log.debug('get_suitable_ssl_version: ssl_version=%r, ssl_legacy=%r', ssl_version, ssl_legacy)
+        if not ssl_legacy:
+            ssl_version = 'TLSv1.2'
+            log.info('get_suitable_ssl_version: force set ssl_version=%r', ssl_version)
+    return ssl_version
+
 def write_device_config(session, vm, vbds, expose_args):
     devices = []
     vdi_uuids = expose_args['vdi_uuid']
@@ -584,15 +592,9 @@ def write_device_config(session, vm, vbds, expose_args):
 
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/use_ssl',
                                            str(expose_args['use_ssl']))
-    ssl_version = str(expose_args['ssl_version'])
-    if ssl_version == '':
-        ssl_legacy = is_ssl_legacy(session)
-        log.debug('write_device_config: ssl_version=%r, ssl_legacy=%r', ssl_version, ssl_legacy)
-        if not ssl_legacy:
-            ssl_version = 'TLSv1.2'
-            log.info('write_device_config: force set ssl_version=%r', ssl_version)
+    suitable_ssl_version = get_suitable_ssl_version(session, str(expose_args['ssl_version']))
     session.xenapi.VM.add_to_xenstore_data(vm, 'vm-data/transfer/ssl_version',
-                                           ssl_version)
+                                           suitable_ssl_version)
 
     if expose_args['timeout_minutes']:
         add_all_devices('timeout', expose_args['timeout_minutes'])
