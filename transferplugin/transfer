@@ -43,7 +43,7 @@ import re
 import sys
 
 # try import ssl in python 2.7 and mute pylint
-#pylint: disable=I0011,E1101
+#pylint: disable=I0011,E1101,E1123
 try:
     import ssl
     _ = ssl.PROTOCOL_TLSv1_2
@@ -1060,13 +1060,12 @@ def unexpose(session, args):
 
 def download(url, localfile, ssl_context=None):
     """Copy the contents of a file from a given URL to a local file."""
-    import urllib2
-    if url.startswith('https://') and ssl_context:
-        log.debug('download: urllib2.build_opener with protocol=%r', ssl_context.protocol)
-        opener = urllib2.build_opener(urllib2.HTTPSHandler(context=ssl_context))
+    import urllib
+    if ssl_context is not None:
+        log.debug('download: urllib.urlopen with protocol=%r', ssl_context.protocol)
+        webfile = urllib.urlopen(url, context=ssl_context)
     else:
-        opener = urllib2.build_opener()
-    webfile = opener.open(url)
+        webfile = urllib.urlopen(url)
     localfile = open(localfile, 'w')
     localfile.write(webfile.read())
     webfile.close()
@@ -1117,7 +1116,8 @@ def save_logs(session, args):
         raise LogsNotFound("The logs for the TransferVM serving vdi_uuid_%s were not able to be downloaded due to the TransferVM not signaling successful export" % vdi_uuid)
 
     log.info("Making a call to download the exposed logs " + url)
-    download(url, log_dir + log_name, ssl_context=get_suitable_ssl_context(session, validate_exists(args, 'ssl_version', '')))
+    ssl_context = get_suitable_ssl_context(session, validate_exists(args, 'ssl_version', ''))
+    download(url, log_dir + log_name, ssl_context=ssl_context)
     return url
 
 
