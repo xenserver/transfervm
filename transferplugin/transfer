@@ -42,6 +42,14 @@ from time import gmtime, strftime
 import re
 import sys
 
+# try import ssl in python 2.7 and mute pylint
+#pylint: disable=I0011,E1101
+try:
+    import ssl
+    _ = ssl.PROTOCOL_TLSv1_2
+except:
+    ssl = None
+
 ##### For Storage Scripts ######
 sys.path.append('/opt/xensource/sm/')
 import cleanup as sr_cleanup #to avoid name conflict with our cleanup
@@ -60,6 +68,8 @@ UTILITY_VM_EXPOSEDONE = 'transfervm_exposedone'
 # Key used to indicate whether logs should automatically be copied off the transfervm
 # before unexposing.
 GET_LOG = 'get_log'
+# SSL ciphers if ssl_legacy=false
+TLS_CIPHER = 'AES128-SHA256'
 
 # How long to wait for a VM to start up and report its IP, SSL certs and the
 # Ready flag before giving up.
@@ -548,6 +558,14 @@ def get_suitable_ssl_version(session, default_version):
             ssl_version = 'TLSv1.2'
             log.info('get_suitable_ssl_version: force set ssl_version=%r', ssl_version)
     return ssl_version
+
+def get_suitable_ssl_context(session, default_version):
+    ssl_context = None
+    ssl_version = get_suitable_ssl_version(session, default_version)
+    if ssl_version == 'TLSv1.2' and ssl is not None:
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+        ssl_context.set_ciphers(TLS_CIPHER)
+    return ssl_context
 
 def write_device_config(session, vm, vbds, expose_args):
     devices = []
@@ -1040,10 +1058,15 @@ def unexpose(session, args):
     cleanup(session, args)
     return 'OK'
 
-def download(url, localfile):
+def download(url, localfile, ssl_context=None):
     """Copy the contents of a file from a given URL to a local file."""
-    import urllib
-    webfile = urllib.urlopen(url)
+    import urllib2
+    if url.startswith('https://') and ssl_context:
+        log.debug('download: urllib2.build_opener with protocol=%r', ssl_context.protocol)
+        opener = urllib2.build_opener(urllib2.HTTPSHandler(context=ssl_context))
+    else:
+        opener = urllib2.build_opener()
+    webfile = opener.open(url)
     localfile = open(localfile, 'w')
     localfile.write(webfile.read())
     webfile.close()
@@ -1094,7 +1117,7 @@ def save_logs(session, args):
         raise LogsNotFound("The logs for the TransferVM serving vdi_uuid_%s were not able to be downloaded due to the TransferVM not signaling successful export" % vdi_uuid)
 
     log.info("Making a call to download the exposed logs " + url)
-    download(url, log_dir + log_name)
+    download(url, log_dir + log_name, ssl_context=get_suitable_ssl_context(session, validate_exists(args, 'ssl_version', '')))
     return url
 
 
@@ -1205,16 +1228,16 @@ def get_record(session, args):
         devices = config['all_devices'].split(',')
         wait_config_ready(session, vm, devices)
         if config['use_ssl'] == 'true':
-            ssl = True
+            use_ssl = True
             config['ssl_cert'] = blocking_read_ssl_cert_config(session, vm, devices[-1]).replace('|', '\n')
         else:
-            ssl = False
+            use_ssl = False
         # Add convenience fields
         if config['transfer_mode'] in ['http', 'bits']:
             def do_full_url(k, u):
                 config[k] = url_full(config['ip'], config['port'],
                                      config['username'], config['password'],
-                                     ssl, u)
+                                     use_ssl, u)
             all_vdi_uuids = vdi_uuid.split(',')
             if 'non_leaf_vdi_uuids' in config:
                 all_vdi_uuids += config['non_leaf_vdi_uuids'].split(',')
