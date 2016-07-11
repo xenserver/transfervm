@@ -278,9 +278,9 @@ def get_this_host(session):
 
 
 def get_domain_0(session):
-    this_host_ref = get_this_host(session)
-    expr = 'field "is_control_domain" = "true" and field "resident_on" = "%s"' % this_host_ref
-    return session.xenapi.VM.get_all_records_where(expr).keys()[0]
+    host_ref = get_this_host(session)
+    vm_ref = session.xenapi.host.get_control_domain(host_ref)
+    return vm_ref
 
 
 def get_local_pbd(session, sr_ref):
