@@ -1058,14 +1058,20 @@ def unexpose(session, args):
     cleanup(session, args)
     return 'OK'
 
-def download(url, localfile, ssl_context=None):
+def download(url, username, password, localfile, ssl_context=None):
     """Copy the contents of a file from a given URL to a local file."""
-    import urllib2
+    import urllib2, base64
+
+    request = urllib2.Request(url)
+    creds = base64.b64encode("%s:%s" % (username, password))
+    request.add_header("Authorization", "Basic %s" % creds)
+
     if ssl_context is not None:
         log.debug('download: urllib2.urlopen with protocol=%r', ssl_context.protocol)
-        webfile = urllib2.urlopen(url, context=ssl_context)
+        webfile = urllib2.urlopen(request, context=ssl_context)
     else:
-        webfile = urllib2.urlopen(url)
+        webfile = urllib2.urlopen(request)
+
     localfile = open(localfile, 'w')
     localfile.write(webfile.read())
     webfile.close()
@@ -1081,9 +1087,9 @@ def get_log_url(session, vm, vdi_uuid):
     else:
         protocol = "http://"
 
-    url = (protocol + config['username'] + ":" + config['password'] + "@" + config['ip'] + ":" + config['port'] + "/" + tvm_log_name)
+    url = (protocol + config['ip'] + ":" + config['port'] + "/" + tvm_log_name)
     log.info("Log URL: " + url)
-    return url
+    return url, config['username'], config['password']
 
 @log_exceptions
 def save_logs(session, args):
@@ -1095,7 +1101,7 @@ def save_logs(session, args):
     domid = session.xenapi.VM.get_domid(vm)
     log.info("Writing to xenstore to signal to TVM")
     os.system(("xenstore-write /local/domain/%s/vm-data/transfer/exposelogs 'yes'" % domid))
-    url = get_log_url(session, vm, vdi_uuid)
+    url, username, password = get_log_url(session, vm, vdi_uuid)
     time_now = strftime("%d-%m-%y-%H-%M-%S", gmtime())
     log_dir = "/var/log/transfervm/"
     log_name = "tvm_log_" + vdi_uuid + "_timestamp_" + time_now
@@ -1117,7 +1123,7 @@ def save_logs(session, args):
 
     log.info("Making a call to download the exposed logs " + url)
     ssl_context = get_suitable_ssl_context(session, validate_exists(args, 'ssl_version', ''))
-    download(url, log_dir + log_name, ssl_context=ssl_context)
+    download(url, username, password, log_dir + log_name, ssl_context=ssl_context)
     return url
 
 
