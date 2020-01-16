@@ -45,7 +45,7 @@ EOF
 auth.debug = 2
 auth.backend = "plain"
 auth.backend.plain.userfile = "$authfile"
-auth.require = ("" => ("method" => "basic", "realm" => "Transfer VM", "require" => "valid-user"))
+auth.require = ("" => ("method" => "digest", "realm" => "Transfer VM", "require" => "valid-user"))
 EOF
     fi
 
