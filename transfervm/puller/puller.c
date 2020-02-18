@@ -56,7 +56,7 @@ static SSL_CTX *make_ctx()
 
     bio_err = BIO_new_fp(stderr, BIO_NOCLOSE);
 
-    return SSL_CTX_new(SSLv23_method());
+    return SSL_CTX_new(TLSv1_2_method());
 }
 
 
