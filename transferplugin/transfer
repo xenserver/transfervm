@@ -1060,17 +1060,19 @@ def unexpose(session, args):
 
 def download(url, username, password, localfile, ssl_context=None):
     """Copy the contents of a file from a given URL to a local file."""
-    import urllib2, base64
+    import urllib2
 
+    passmgr = urllib2.HTTPPasswordMgr()
+    passmgr.add_password("Transfer VM", url, username, password)
+    auth = urllib2.HTTPDigestAuthHandler(passmgr)
+    https = urllib2.HTTPSHandler(context=ssl_context)
+    opener = urllib2.build_opener(auth,https)
+    urllib2.install_opener(opener)
     request = urllib2.Request(url)
-    creds = base64.b64encode("%s:%s" % (username, password))
-    request.add_header("Authorization", "Basic %s" % creds)
 
     if ssl_context is not None:
         log.debug('download: urllib2.urlopen with protocol=%r', ssl_context.protocol)
-        webfile = urllib2.urlopen(request, context=ssl_context)
-    else:
-        webfile = urllib2.urlopen(request)
+    webfile = urllib2.urlopen(request)
 
     localfile = open(localfile, 'w')
     localfile.write(webfile.read())
