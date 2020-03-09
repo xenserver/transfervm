@@ -1,17 +1,10 @@
 #!/bin/sh
 
 sslversion=$(/usr/bin/xenstore-read "vm-data/transfer/ssl_version")
-if [ "$sslversion" == "" ]; then
-    sslversion="all"
-fi
 
 sslciphers=$(/usr/bin/xenstore-read "vm-data/transfer/ssl_ciphers")
 if [ "$sslciphers" == "" ]; then
-    if [ "$sslversion" == "TLSv1.2" ]; then
-        sslciphers="!SSLv2:RSA+AES128-SHA256"
-    else
-        sslciphers="!SSLv2:RSA+AES128-SHA256:RSA+AES256-SHA:RSA+AES128-SHA:RSA+RC4-SHA:RSA+RC4-MD5:RSA+DES-CBC3-SHA"
-    fi
+    sslciphers="!SSLv2:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-GCM-SHA384:AES256-SHA256:AES128-SHA256"
 fi
 
 global_config="

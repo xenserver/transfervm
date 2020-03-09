@@ -541,22 +541,11 @@ def write_network_config(session, vm, expose_args):
         add('mask', expose_args['network_mask'])
         add('gateway', expose_args['network_gateway'])
 
-def is_ssl_legacy(session):
-    try:
-        this_host_uuid = get_from_xensource_inventory('INSTALLATION_UUID')
-        this_host_ref = session.xenapi.host.get_by_uuid(this_host_uuid)
-        return session.xenapi.host.get_ssl_legacy(this_host_ref)
-    except:
-        return True
-
 def get_suitable_ssl_version(session, default_version):
     ssl_version = default_version
-    if ssl_version == '':
-        ssl_legacy = is_ssl_legacy(session)
-        log.debug('get_suitable_ssl_version: ssl_version=%r, ssl_legacy=%r', ssl_version, ssl_legacy)
-        if not ssl_legacy:
-            ssl_version = 'TLSv1.2'
-            log.info('get_suitable_ssl_version: force set ssl_version=%r', ssl_version)
+    if ssl_version == '' or ssl_version == 'None':
+        ssl_version = 'TLSv1.2'
+        log.info('get_suitable_ssl_version: force set ssl_version=%r', ssl_version)
     return ssl_version
 
 def get_suitable_ssl_context(session, default_version):
@@ -894,7 +883,7 @@ def expose(session, args):
         parse_vhd_args(args, parsedargs)
     elif parsedargs['transfer_mode'] == 'iscsi':
         if parsedargs['network_port'] != default_port('iscsi', parsedargs['use_ssl']):
-            raise ArgumentError('Port %r is not supported for the iSCSI transfer mode, can only use the system default %r.' % (parsedargs['network_port'], default_port('iscsi')))
+            raise ArgumentError('Port %r is not supported for the iSCSI transfer mode, can only use the system default %r.' % (parsedargs['network_port'], default_port('iscsi', parsedargs['use_ssl'])))
     elif parsedargs['transfer_mode'] == 'http_pull':
         parse_puller_args(args, parsedargs)
 
@@ -964,6 +953,12 @@ def parse_network_args(args, parsedargs):
     copy('network_uuid')
     copy('network_mac', '')
     copy('ssl_version', '')
+
+    if parsedargs['use_ssl'] == True: 
+        if parsedargs['ssl_version'] != 'TLSv1.2' and parsedargs['ssl_version'] != '' and parsedargs['ssl_version'] != 'None':
+            raise PluginError('Cannot support ssl_version=%r', parsedargs['ssl_version'])
+    else:
+        parsedargs['ssl_version'] = ''
 
     if parsedargs['network_mode'] == 'manual':
         copy('network_ip')
@@ -1060,17 +1055,19 @@ def unexpose(session, args):
 
 def download(url, username, password, localfile, ssl_context=None):
     """Copy the contents of a file from a given URL to a local file."""
-    import urllib2, base64
+    import urllib2
 
+    passmgr = urllib2.HTTPPasswordMgr()
+    passmgr.add_password("Transfer VM", url, username, password)
+    auth = urllib2.HTTPDigestAuthHandler(passmgr)
+    https = urllib2.HTTPSHandler(context=ssl_context)
+    opener = urllib2.build_opener(auth,https)
+    urllib2.install_opener(opener)
     request = urllib2.Request(url)
-    creds = base64.b64encode("%s:%s" % (username, password))
-    request.add_header("Authorization", "Basic %s" % creds)
 
     if ssl_context is not None:
         log.debug('download: urllib2.urlopen with protocol=%r', ssl_context.protocol)
-        webfile = urllib2.urlopen(request, context=ssl_context)
-    else:
-        webfile = urllib2.urlopen(request)
+    webfile = urllib2.urlopen(request)
 
     localfile = open(localfile, 'w')
     localfile.write(webfile.read())

@@ -60,6 +60,7 @@ EOF
 #ssl.engine = "enable"
 #ssl.pemfile = "$pemfile"
 ssl.bind = "localhost"
+ssl.ec-curve = "secp384r1"
 EOF
     else
         cat <<EOF
